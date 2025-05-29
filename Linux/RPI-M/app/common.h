@@ -53,12 +53,12 @@ typedef struct {
 } LidarItem;
 
 typedef struct {
-    LidarItem buffer[QUEUE_SIZE];
-    int head, tail;
-    
     pthread_mutex_t mutex;
     sem_t sem_empty;
     sem_t sem_full;
+
+    int head, tail;
+    LidarItem buffer[QUEUE_SIZE];
 } LidarQueue;
 
 // --- [2] Camera 데이터 구조 (BBox)
@@ -75,12 +75,12 @@ typedef struct {
 } CameraItem;
 
 typedef struct {
-    CameraItem buffer[QUEUE_SIZE];
-    int head, tail;
-
     pthread_mutex_t mutex;
     sem_t sem_empty;
     sem_t sem_full;
+
+    int head, tail;
+    CameraItem buffer[QUEUE_SIZE];
 } CameraQueue;
 
 

@@ -86,7 +86,7 @@ int main()
             // 큐의 tail 위치에 데이터 쓰기
             LidarItem *item = &q->buffer[q->tail];
             item->count = 0;
-            item->timestamp = (float)time(NULL);
+            item->timestamp = (float)time(NULL) * 1000;
 
             for (int i = 0; i < scan.npoints; i++) {
                 if (item->count >= MAX_LIDAR_POINTS) break;
