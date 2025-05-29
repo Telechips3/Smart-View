@@ -2,8 +2,10 @@
 #include <sys/wait.h>
 #include "../common.h"
 
+static pid_t child_pids[3];
+
 // 프로세스를 실행시키는 함수
-void spawn_process(const char* program_name, const char* path) {
+pid_t spawn_process(const char* program_name, const char* path) {
     pid_t pid = fork();
 
     if (pid < 0) {
@@ -28,6 +30,7 @@ void spawn_process(const char* program_name, const char* path) {
     // 3. 부모 프로세스 영역 (Parent Process)
     // 부모는 여기서 아무것도 안 하고 그냥 리턴해서 다음 자식을 낳으러 감
     printf("[Init System] Launched %s (PID: %d)\n", program_name, pid);
+    return pid;
 }
 
 int shared_module_init(const char* const name, int shm_size)
@@ -127,23 +130,38 @@ int main() {
 
     // [Step 2] 각 프로세스 실행 (Fork & Exec)
     // 실제 실행 파일 경로를 적어주세요
-    spawn_process(LIDAR_PROC,  path_LIDAR_PROC);
-    spawn_process(CAMERA_PROC, path_CAMERA_PROC);
-    spawn_process(MAIN_PROC,   path_MAIN_PROC);
+    child_pids[0] = spawn_process(LIDAR_PROC,  path_LIDAR_PROC);
+    child_pids[1] = spawn_process(CAMERA_PROC, path_CAMERA_PROC);
+    child_pids[2] = spawn_process(MAIN_PROC,   path_MAIN_PROC);
 
     // [Step 3] 모니터링 (부모 프로세스의 역할)
     // 자식들이 죽지 않고 잘 돌아가는지 감시합니다.
     while (1) {
         int status;
-        // wait(): 자식 중 하나라도 종료될 때까지 대기
-        pid_t child_pid = wait(&status);
-
-        if (child_pid > 0) {
-            printf("[Alert] Child process %d died!\n", child_pid);
-            
-            // 여기서 죽은 프로세스를 다시 살리는(Respawn) 로직을 넣을 수도 있습니다.
-            // 예: if (child_pid == camera_pid) spawn_process(..., "./camera_app");
+        pid_t died_pid = waitpid(-1, &status, WNOHANG); 
+        if (died_pid > 0) {
+            printf("[Alert] Child process %d died!\n", died_pid);
         }
+
+        // 2. 키 입력 확인 (표준 입력 감시)
+        // 주의: 이 방식은 Enter를 눌러야 입력이 넘어옵니다. 
+        // 실시간 키 1개 감지를 원하면 termios 설정을 추가해야 합니다.
+        char input[10];
+        if (fgets(input, sizeof(input), stdin) != NULL) {
+            if (input[0] == 'q' || input[0] == 'Q') {
+                printf("[Init System] Sending SIGINT to all children...\n");
+                
+                for(int i = 0; i < 3; i++) {
+                    if (child_pids[i] > 0) {
+                        kill(child_pids[i], SIGINT); // 자식들에게 SIGINT 전송
+                        printf("Sent SIGINT to PID %d\n", child_pids[i]);
+                    }
+                }
+                break; // 부모도 종료 루틴으로
+            }
+        }
+        
+        usleep(100000); // CPU 점유율 방지 (100ms)
     }
 
     shared_close(fd, shm_path);

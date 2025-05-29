@@ -12,7 +12,8 @@
 #include <stdlib.h>     
 #include <string.h>
 #include <sys/mman.h>   
-#include <sys/stat.h>   
+#include <sys/stat.h>
+#include <signal.h>
 
 // POSIX Shared Memory 이름
 #define SHM_NUM                 3

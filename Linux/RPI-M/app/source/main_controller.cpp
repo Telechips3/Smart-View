@@ -14,6 +14,12 @@ Mat mtxR = (Mat_<double>(3, 3) << 705.052, 0, 316.681, 0, 703.592, 251.951, 0, 0
 
 float angF = -0.023f, yF = -0.150f, sF = 0.76f;
 float angR = -0.023f, yR = -0.150f, sR = 0.79f;
+volatile sig_atomic_t stop_flag = 0; // 시그널 핸들러와 공유할 인자 역할
+
+void handle_sigint(int sig) {
+    printf("\n[수신] SIGINT (%d) 발생! 프로그램을 정리하고 종료합니다.\n", sig);
+    stop_flag = 1;
+}
 
 // void drawContour(Mat &img, const vector<LidarPoint> &pts, Scalar color)
 // {
@@ -82,6 +88,8 @@ int main()
     int fd_f = shm_open(SHM_NAME_FRONT_CAMERA, O_RDWR, 0666);
     int fd_b = shm_open(SHM_NAME_BACK_CAMERA, O_RDWR, 0666);
 
+    signal(SIGINT, handle_sigint);
+
     LidarQueue *q_l = (LidarQueue *)mmap(NULL, sizeof(LidarQueue), PROT_READ | PROT_WRITE, MAP_SHARED, fd_l, 0);
     CameraQueue *q_f = (CameraQueue *)mmap(NULL, sizeof(CameraQueue), PROT_READ | PROT_WRITE, MAP_SHARED, fd_f, 0);
     CameraQueue *q_b = (CameraQueue *)mmap(NULL, sizeof(CameraQueue), PROT_READ | PROT_WRITE, MAP_SHARED, fd_b, 0);
@@ -89,7 +97,7 @@ int main()
     vector<LidarPoint> ptsF, ptsR;
     ptsF.reserve(MAX_LIDAR_POINTS);
     ptsR.reserve(MAX_LIDAR_POINTS);
-    while (true)
+    while (!stop_flag)
     {
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
@@ -131,7 +139,7 @@ int main()
 
         Mat combined;
         hconcat(viewF, viewR, combined);
-        imshow("Lidar-Camera Fusion Monitoring", combined);
+        //imshow("Lidar-Camera Fusion Monitoring", combined);
 
         if (waitKey(10) == 'q')
             break;

@@ -8,6 +8,13 @@
 #define UDP_PORT 5005
 #define BUFFER_SIZE 4096
 
+volatile sig_atomic_t stop_flag = 0;
+
+void handle_sigint(int sig) {
+    printf("\n[수신] SIGINT (%d) 발생! 프로그램을 정리하고 종료합니다.\n", sig);
+    stop_flag = 1;
+}
+
 // 1. 공유 메모리 연결
 int attach_shm(const char *shm_name, CameraQueue **shm_q) {
     int fd = shm_open(shm_name, O_RDWR, 0666);
@@ -118,6 +125,8 @@ int main(int argc, char *argv[]) {
     CameraQueue *back_q = NULL;
     int port = UDP_PORT;
 
+    signal(SIGINT, handle_sigint);
+
     // 1. 공유 메모리 연결
     if (attach_shm(SHM_NAME_FRONT_CAMERA, &front_q) < 0) {
         fprintf(stderr, "[Camera] Front SHM not ready.\n");
@@ -136,7 +145,7 @@ int main(int argc, char *argv[]) {
     char buffer[BUFFER_SIZE];
 
     // 3. 생산자 루프 (Receive -> Parse -> Produce)
-    while (1) {
+    while (!stop_flag) {
         ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&cliaddr, &len);
         if (n > 0) {
             buffer[n] = '\0';

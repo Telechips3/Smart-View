@@ -18,6 +18,12 @@ Mat mtxR = (Mat_<double>(3,3) << 705.052, 0, 316.681, 0, 703.592, 251.951, 0, 0,
 float angF = -0.023f, yF = -0.150f, sF = 0.76f;
 float angR = -0.023f, yR = -0.150f, sR = 0.79f;
 
+volatile sig_atomic_t stop_flag = 0;
+
+void handle_sigint(int sig) {
+    printf("\n[수신] SIGINT (%d) 발생! 프로그램을 정리하고 종료합니다.\n", sig);
+    stop_flag = 1;
+}
 
 int main()
 {
@@ -33,6 +39,7 @@ int main()
         return -1;
     }
 
+    signal(SIGINT, handle_sigint);
 
     // --- 1. 라이다 하드웨어 초기화 및 구동 섹션 ---
     os_init(); // YDLidar SDK 내부 운영체제 자원 초기화
@@ -64,7 +71,7 @@ int main()
 
     printf("[Lidar Producer] Ready to produce data...\n");
 
-    while(true){
+    while(!stop_flag){
         // 전방(F)과 후방(R) 모니터링을 위한 빈 검은색 화면(640x480)을 매 프레임 생성
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
@@ -130,7 +137,6 @@ int main()
             sem_post(&q->sem_full); 
         }
     }
-
 
     // 1. 동적 할당된 메모리 해제: malloc으로 빌렸던 라이다 점 저장용 메모리를 OS에 반납
     free(scan.points); 
