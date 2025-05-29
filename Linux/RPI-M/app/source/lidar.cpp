@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <sys/socket.h>
+#include <cmath>
 #include <opencv2/opencv.hpp>
 #include "common.h"
 #include "ydlidar_sdk.h"
