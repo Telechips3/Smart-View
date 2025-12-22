@@ -28,7 +28,25 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+/* 시스템 상태 정의 */
+typedef enum {
+    STATE_MONITORING, // 대기 모드 (안전)
+    STATE_WARNING,    // 주의 모드 (사람 감지)
+    STATE_LOCK,       // 잠금 모드 (이륜차 감지)
+    STATE_UNLOCK,     // 문 열림
+    STATE_HOLD_LOCK,  // 락 유지 (강제 잠금)
+    STATE_EXIT        // 하차 완료
+} SystemState_t;
 
+/* 센서 데이터 구조체 (Queue로 전달 가능) */
+typedef struct {
+    uint8_t objectType; // 0: None, 1: Person, 2: Bike
+    float distance;     // 거리 (m)
+    uint8_t btnState;   // 0: None, 1: Short, 2: Long(3s)
+} SensorData_t;
+
+// 전역 변수 혹은 Queue를 통해 공유될 현재 상태
+SystemState_t currentState = STATE_MONITORING;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -82,12 +100,6 @@ void StartTask03(void const * argument);
 void StartTask04(void const * argument);
 
 /* USER CODE BEGIN PFP */
-
-enum danger_state_t{
-	Danger = 0,
-	Warning = 1,
-	Safe = 2
-};
 
 /* USER CODE END PFP */
 
@@ -495,19 +507,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin == GPIO_PIN_0) // 버튼이 연결된 핀 번호
-    {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-        // 인터럽트 내에서 세마포어 Give
-        xSemaphoreGiveFromISR(sema_btn, &xHigherPriorityTaskWoken);
-
-        // 더 높은 우선순위 태스크가 깨어났다면 컨텍스트 스위칭 수행
-        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-    }
-}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -537,25 +536,71 @@ void StartDefaultTask(void const * argument)
 * @retval None
 */
 /* USER CODE END Header_StartTask02 */
-void StartTask02(void const * argument)
+/* Logic Task 함수 */
+void StartLogicTask(void const * argument)
 {
-  /* USER CODE BEGIN StartTask02 */
-  /* Infinite loop */
+  /* 센서 데이터 (가상의 전역변수나 Queue에서 읽어온다고 가정) */
+  extern SensorData_t currentSensorData;
+
   for(;;)
   {
-        if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET)
-        {
-            button_pressed = 1;
+    // 1. 초기 상태 결정 (모니터링 / 주의 / 잠금)
+    if (currentSensorData.objectType == 2 && currentSensorData.distance < 6.0f) {
+        // 이륜차 & 6m 미만 -> 잠금 모드
+        if (currentState != STATE_HOLD_LOCK) currentState = STATE_LOCK;
+    }
+    else if (currentSensorData.objectType == 1 && currentSensorData.distance < 6.0f) {
+        // 사람 & 6m 미만 -> 주의 모드
+        if (currentState != STATE_LOCK && currentState != STATE_HOLD_LOCK)
+            currentState = STATE_WARNING;
+    }
+    else if (currentSensorData.objectType == 1 && currentSensorData.distance < 6.0f) {
+            // 사람 & 6m 미만 -> 주의 모드
+            if (currentState != STATE_LOCK && currentState != STATE_HOLD_LOCK)
+                currentState = STATE_WARNING;
         }
-        else
-        {
-            button_pressed = 0;
-        }
-    osDelay(1);
-  }
-  /* USER CODE END StartTask02 */
-}
+    else {
+        // 안전 거리 확보 -> 대기 모드
+        if (currentState != STATE_UNLOCK && currentState != STATE_EXIT)
+            currentState = STATE_MONITORING;
+    }
 
+    // 2. 버튼 입력 및 상태 전이 로직
+    switch (currentState) {
+        case STATE_MONITORING:
+        case STATE_WARNING:
+            // 하차 버튼 누르면 -> 문 열림
+            if (currentSensorData.btnState == 1) {
+                currentState = STATE_UNLOCK;
+            }
+            break;
+
+        case STATE_LOCK:
+            // 이륜차 감지 중 or 버튼 3초 이상 누름 -> 락 유지
+            if (currentSensorData.objectType == 2) {
+                currentState = STATE_HOLD_LOCK;
+            }
+            break;
+
+        case STATE_UNLOCK:
+            // 문이 열려있더라도 위험 상황(이륜차/Long Press) 발생 시 -> 락 유지(닫음)
+            if (currentSensorData.objectType == 2) {
+                currentState = STATE_HOLD_LOCK;
+            }
+            // 일정 시간 후 하차 완료 처리 로직 추가 가능
+            break;
+
+        case STATE_HOLD_LOCK:
+            // 위험 요소 사라지면 다시 모니터링/잠금 상태로 복귀 로직 필요
+            if (currentSensorData.objectType == 0 && currentSensorData.btnState == 0) {
+                 currentState = STATE_MONITORING;
+            }
+            break;
+    }
+
+    osDelay(10); // 10ms 주기
+  }
+}
 /* USER CODE BEGIN Header_StartTask03 */
 /**
 * @brief Function implementing the myTask03 thread.
@@ -563,24 +608,34 @@ void StartTask02(void const * argument)
 * @retval None
 */
 /* USER CODE END Header_StartTask03 */
-void StartTask03(void const * argument)
-{
-  /* USER CODE BEGIN StartTask03 */
+void CheckButtonState(void) {
+    static uint32_t pressStartTime = 0;
+    static uint8_t isPressed = 0;
 
-  /* Infinite loop */
-  for(;;)
-  {
-      if (button_pressed)
-          {
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 부저 ON
-          }
-          else
-          {
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 부저 OFF
-          }
-    osDelay(1);
-  }
-  /* USER CODE END StartTask03 */
+    // 버튼 눌림 (Low Active 가정)
+    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET) {
+        if (isPressed == 0) {
+            isPressed = 1;
+            pressStartTime = HAL_GetTick(); // 누른 시간 기록
+        }
+
+        // 3초 이상 누르고 있는 중인지 체크
+        if ((HAL_GetTick() - pressStartTime) > 3000) {
+            currentSensorData.btnState = 2; // Long Press 감지
+        }
+    }
+    else {
+        // 버튼 뗌
+        if (isPressed == 1) {
+            // 3초 미만으로 눌렀다 뗐다면 Short Press
+            if ((HAL_GetTick() - pressStartTime) < 3000) {
+                currentSensorData.btnState = 1; // Short Press
+            }
+            isPressed = 0;
+        } else {
+             currentSensorData.btnState = 0; // None
+        }
+    }
 }
 /* USER CODE BEGIN Header_StartTask04 */
 /**
@@ -589,34 +644,34 @@ void StartTask03(void const * argument)
 * @retval None
 */
 /* USER CODE END Header_StartTask04 */
-void StartTask04(void const * argument)
+void ControlServo(SystemState_t state)
 {
-    /* PWM 시작 */
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    uint32_t pulse = 0;
 
-    for(;;)
-    {
-        // 세마포어를 받을 때까지 무한 대기 (portMAX_DELAY)
-        if (xSemaphoreTake(sema_btn, portMAX_DELAY) == pdPASS)
-        {
-            /* 1. 버튼 눌림: 90도로 이동 (Pulse 1500) */
-            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1500);
+    switch(state) {
+        case STATE_UNLOCK:
+        case STATE_EXIT:
+            // 문 열림 (90도 가정) -> CCR값 조절 (시스템 클럭에 따라 계산 필요)
+            // 예: Prescaler 설정으로 1 tick = 1us라 가정시 1500us = 90도
+            pulse = 1500;
+            break;
 
-            // 모터가 이동할 시간을 벌어줌 (예: 500ms 대기)
-            osDelay(500);
+        case STATE_LOCK:
+        case STATE_HOLD_LOCK:
+            // 문 잠금 (0도 가정)
+            pulse = 500; // 0.5ms
+            break;
 
-            /* 2. 다시 0도로 복귀 (Pulse 1000 또는 500) */
-            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 500);
-        }
+        default:
+            // 평소 상태 (닫힘 유지)
+            pulse = 500;
+            break;
     }
+
+    // PWM 듀티 사이클 업데이트
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulse);
 }
 
-void StartTask05(void const * argument){   //우선순위로 context switch
-	if(danger_state > 1){
-		xSemaphoretake(sema_door, portMAX_DELAY);
-		door_locked = 1;
-	}
-}
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
