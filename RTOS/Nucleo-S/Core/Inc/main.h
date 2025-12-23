@@ -166,7 +166,7 @@ typedef union {
     UART_Packet_t data;
 } Shared_Buffer_t;
 
-// 3. 패킷 사이즈 정의 (17 Bytes)
+// 3. 패킷 사이즈 정의 (28 Bytes)
 #define PACKET_SIZE sizeof(UART_Packet_t)
 /* USER CODE END Private defines */
 
