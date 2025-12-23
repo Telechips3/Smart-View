@@ -28,3 +28,50 @@ Module.markers
 *.swp
 *~
 .vscode/
+
+# --- [컴파일 실행 파일 및 바이너리] ---
+# 특정 이름이 없는 리눅스 실행 파일(보통 확장자 없음)을 제외하기 위해 
+# 먼저 모든 파일을 제외하고 확장자가 있는 파일만 다시 포함하는 방식을 쓰기도 하지만,
+# 보통은 빌드 폴더를 통째로 제외하는 것이 가장 깔끔합니다.
+
+# 빌드 결과물 폴더 (cmake 사용 시)
+build/
+bin/
+out/
+
+# 확장자가 없는 실행 파일들을 개별적으로 기록하거나, 
+# 프로젝트 실행 파일 이름을 직접 추가하세요 (예: my_lidar_app)
+# 아래는 일반적인 실행 파일 이름 예시입니다.
+a.out
+*.out
+*.app
+
+# --- [오브젝트 및 라이브러리 파일] ---
+*.o
+*.obj
+*.a
+*.la
+*.lo
+*.so
+*.so.*
+*.dll
+*.dylib
+
+# --- [CMake 및 빌드 시스템 파일] ---
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# --- [IDE 및 에디터 관련] ---
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- [로그 및 임시 파일] ---
+*.log
+*.tmp
