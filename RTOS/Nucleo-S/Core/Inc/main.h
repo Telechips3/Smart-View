@@ -156,18 +156,18 @@ typedef struct {
     float	bbox_h;
     float	bbox_w;
     uint8_t  checksum;  // CRC/XOR Checksum (1 Byte)
-} UART_Packet_t;
+} SPI_Packet_t;
 
 #pragma pack(pop)
 
 // 2. 공용체 정의 (배열 <-> 구조체 변환용)
 typedef union {
-    uint8_t       buffer[sizeof(UART_Packet_t)];
-    UART_Packet_t data;
+    uint8_t       buffer[sizeof(SPI_Packet_t)];
+    SPI_Packet_t data;
 } Shared_Buffer_t;
 
 // 3. 패킷 사이즈 정의 (28 Bytes)
-#define PACKET_SIZE sizeof(UART_Packet_t)
+#define PACKET_SIZE sizeof(SPI_Packet_t)
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
