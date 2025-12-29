@@ -59,16 +59,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define ROW3_Pin GPIO_PIN_2
-#define ROW3_GPIO_Port GPIOE
-#define COL2_Pin GPIO_PIN_3
-#define COL2_GPIO_Port GPIOE
-#define COL3_Pin GPIO_PIN_4
-#define COL3_GPIO_Port GPIOE
-#define COL7_Pin GPIO_PIN_5
-#define COL7_GPIO_Port GPIOE
-#define COL5_Pin GPIO_PIN_6
-#define COL5_GPIO_Port GPIOE
 #define USER_Btn_Pin GPIO_PIN_13
 #define USER_Btn_GPIO_Port GPIOC
 #define MCO_Pin GPIO_PIN_0
@@ -79,6 +69,8 @@ void Error_Handler(void);
 #define RMII_REF_CLK_GPIO_Port GPIOA
 #define RMII_MDIO_Pin GPIO_PIN_2
 #define RMII_MDIO_GPIO_Port GPIOA
+#define MAX7219_CS_Pin GPIO_PIN_4
+#define MAX7219_CS_GPIO_Port GPIOA
 #define RMII_CRS_DV_Pin GPIO_PIN_7
 #define RMII_CRS_DV_GPIO_Port GPIOA
 #define RMII_RXD0_Pin GPIO_PIN_4
@@ -87,12 +79,6 @@ void Error_Handler(void);
 #define RMII_RXD1_GPIO_Port GPIOC
 #define LD1_Pin GPIO_PIN_0
 #define LD1_GPIO_Port GPIOB
-#define ROW2_Pin GPIO_PIN_7
-#define ROW2_GPIO_Port GPIOE
-#define COL4_Pin GPIO_PIN_8
-#define COL4_GPIO_Port GPIOE
-#define ROW1_Pin GPIO_PIN_9
-#define ROW1_GPIO_Port GPIOE
 #define RMII_TXD1_Pin GPIO_PIN_13
 #define RMII_TXD1_GPIO_Port GPIOB
 #define LD3_Pin GPIO_PIN_14
@@ -105,10 +91,6 @@ void Error_Handler(void);
 #define USB_PowerSwitchOn_GPIO_Port GPIOG
 #define USB_OverCurrent_Pin GPIO_PIN_7
 #define USB_OverCurrent_GPIO_Port GPIOG
-#define ROW6_Pin GPIO_PIN_8
-#define ROW6_GPIO_Port GPIOC
-#define ROW8_Pin GPIO_PIN_9
-#define ROW8_GPIO_Port GPIOC
 #define USB_SOF_Pin GPIO_PIN_8
 #define USB_SOF_GPIO_Port GPIOA
 #define USB_VBUS_Pin GPIO_PIN_9
@@ -123,18 +105,6 @@ void Error_Handler(void);
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
-#define ROW7_Pin GPIO_PIN_10
-#define ROW7_GPIO_Port GPIOC
-#define ROW5_Pin GPIO_PIN_11
-#define ROW5_GPIO_Port GPIOC
-#define COL8_Pin GPIO_PIN_0
-#define COL8_GPIO_Port GPIOD
-#define COL6_Pin GPIO_PIN_1
-#define COL6_GPIO_Port GPIOD
-#define ROW4_Pin GPIO_PIN_2
-#define ROW4_GPIO_Port GPIOD
-#define COL1_Pin GPIO_PIN_3
-#define COL1_GPIO_Port GPIOD
 #define RMII_TX_EN_Pin GPIO_PIN_11
 #define RMII_TX_EN_GPIO_Port GPIOG
 #define RMII_TXD0_Pin GPIO_PIN_13
@@ -156,18 +126,18 @@ typedef struct {
     float	bbox_h;
     float	bbox_w;
     uint8_t  checksum;  // CRC/XOR Checksum (1 Byte)
-} UART_Packet_t;
+} SPI_Packet_t;
 
 #pragma pack(pop)
 
 // 2. 공용체 정의 (배열 <-> 구조체 변환용)
 typedef union {
-    uint8_t       buffer[sizeof(UART_Packet_t)];
-    UART_Packet_t data;
+    uint8_t       buffer[sizeof(SPI_Packet_t)];
+    SPI_Packet_t data;
 } Shared_Buffer_t;
 
 // 3. 패킷 사이즈 정의 (28 Bytes)
-#define PACKET_SIZE sizeof(UART_Packet_t)
+#define PACKET_SIZE sizeof(SPI_Packet_t)
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

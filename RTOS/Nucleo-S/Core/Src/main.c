@@ -22,7 +22,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "dotmatrix.h"
+#include "MAX7219.h"
+#include "adb_system.h"
+#include <string.h> // memset
+#include <stdlib.h>
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -75,10 +78,10 @@ static void MX_SPI1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-//uint8_t rx_data;
-Shared_Buffer_t g_spi_buf; // 수신 버퍼 (공용체)
-//uint8_t spi_rx_tmp[28];        // 1바이트 임시 저장소
-//int spi_rx_idx = 0;             // 수신 인덱스
+#define RX_BUFFER_SIZE 10
+uint8_t rx_data;                // 1바이트 수신 임시 변수
+char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
+uint8_t rx_index = 0;
 /* USER CODE END 0 */
 
 /**
@@ -116,10 +119,10 @@ int main(void)
   MX_TIM2_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_SPI_Receive_IT(&hspi1, g_spi_buf.buffer, PACKET_SIZE);
-  //HAL_UART_Receive_IT(&huart3, &rx_byte_tmp, 1);
-  dotmatrix_init();
-  HAL_TIM_Base_Start_IT(&htim2);
+  ADB_Init(); // LED 전체 켜기 상태로 시작
+
+      // UART 수신 인터럽트 시작
+  HAL_UART_Receive_IT(&huart3, &rx_data, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -247,12 +250,13 @@ static void MX_SPI1_Init(void)
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_SLAVE;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -407,7 +411,6 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -416,8 +419,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
-                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
@@ -425,26 +427,18 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : ROW3_Pin COL2_Pin COL3_Pin COL7_Pin
-                           COL5_Pin ROW2_Pin COL4_Pin ROW1_Pin */
-  GPIO_InitStruct.Pin = ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
-                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
   /*Configure GPIO pin : USER_Btn_Pin */
   GPIO_InitStruct.Pin = USER_Btn_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : MAX7219_CS_Pin */
+  GPIO_InitStruct.Pin = MAX7219_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(MAX7219_CS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
@@ -466,75 +460,57 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ROW6_Pin ROW8_Pin ROW7_Pin ROW5_Pin */
-  GPIO_InitStruct.Pin = ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : COL8_Pin COL6_Pin ROW4_Pin COL1_Pin */
-  GPIO_InitStruct.Pin = COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
+  HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_SET);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-	if(hspi->Instance == SPI1)
-	{
-		if(g_spi_buf.data.header == 0xAA)
-		{
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART3) {
 
-			uint8_t chksum = 0;
-				//체크썸 계산
-			for(int i = 0; i < PACKET_SIZE - 1; i++)
-			{
-				chksum ^= g_spi_buf.buffer[i];
-			}
+    // [추가된 코드] 받은 글자(rx_data)를 그대로 다시 PC로 전송 (Echo Back)
+    HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
 
-			if(chksum == g_spi_buf.data.checksum)
-			{
-				if(g_spi_buf.data.detected == 1)
-				{
-					dotmatrix_set_adb_pattern((int16_t)g_spi_buf.data.bbox_x, 100);
-				}
-				else
-				{
-					dotmatrix_set_adb_pattern(0, 0);
-				}
-			}
-			else
-			{
-					//에러 로직
-			}
+    // 1. 엔터키('\n' 또는 '\r') 감지 시 명령 실행
+    if (rx_data == '\n' || rx_data == '\r') {
+        rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
 
-		}
-		HAL_SPI_Receive_IT(&hspi1, g_spi_buf.buffer, PACKET_SIZE);
-	}
-}
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-	if (htim->Instance == TIM2)
-	{
-	    dotmatrix_update(); //
-	}
-}
+        // (선택사항) 줄바꿈을 깔끔하게 하기 위해 추가 전송
+        uint8_t newline[] = "\r\n";
+        HAL_UART_Transmit(&huart3, newline, 2, 10);
 
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
-{
-    if(hspi->Instance == SPI1) // 사용하는 SPI 채널 확인
-    {
-        // 1. 에러가 났어도 다시 수신 대기 상태로 강제 복귀
-        HAL_SPI_Receive_IT(&hspi1, g_spi_buf.buffer, PACKET_SIZE);
+        if (rx_index > 0) {
+            if (rx_buffer[0] == 'r' || rx_buffer[0] == 'R') {
+                ADB_SetX(-1);
+                // 디버깅 메시지 출력 예시
+                printf("Mode: Reset (Full On)\r\n");
+            }
+            else {
+                int x_val = atoi(rx_buffer);
+                ADB_SetX(x_val);
+                // 디버깅 메시지 출력 예시
+                printf("Input X: %d\r\n", x_val);
+            }
+        }
+        rx_index = 0;
+        memset(rx_buffer, 0, RX_BUFFER_SIZE);
     }
+    else {
+        // 숫자면 버퍼에 담기
+        if (rx_index < RX_BUFFER_SIZE - 1) {
+            // 숫자나 'r' 같은 유효한 문자만 담기
+            rx_buffer[rx_index++] = rx_data;
+        }
+    }
+
+    // 다음 문자 수신 대기
+    HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  }
+}
+int _write(int file, char *ptr, int len) {
+    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
+    return len;
 }
 /* USER CODE END 4 */
 
