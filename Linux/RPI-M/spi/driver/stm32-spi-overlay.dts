@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+/ {
+    // 오버레이가 적용될 대상 하드웨어 (Broadcom 2711 = 라즈베리파이4)
+    compatible = "brcm,bcm2711";
+    fragment@0 {
+        target = <&spi0>;
+        __overlay__ {
+            // SPI0 컨트롤러를 활성화 상태로 변경
+            status = "okay";
+
+            // 기존의 일반적인 spidev는 비활성화 (충돌 방지)
+            spidev@0 { status = "disabled"; }; 
+
+            // STM32 통신 전용 노드 정의
+            stm32_spi: stm32_spi@0 {
+                compatible = "my,stm32-link"; // 어떤 이름의 드라이버 로드할지 결정
+                reg = <0>; // Chip Select CE0 (GPIO 8) 연결 확인
+                spi-max-frequency = <1000000>; // SPI 통신 최대 속도 (1MHz로 안전하게 시작)
+            };
+        };
+    };
+};
