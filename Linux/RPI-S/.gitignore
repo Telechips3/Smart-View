@@ -1,0 +1,12 @@
+# 딥러닝 모델 파일 무시 (절대 올리지 마!)
+*.pt
+*.pth
+*.weights
+*.onnx
+
+# 데이터셋 폴더 무시
+/datasets/
+/train_images/
+
+# 파이썬 캐시 무시
+__pycache__/
