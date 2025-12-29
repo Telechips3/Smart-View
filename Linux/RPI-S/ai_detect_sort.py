@@ -15,16 +15,19 @@ CAM_SOURCES = [0, 2]         # 연결된 카메라 번호 (USB 포트 위치에 
 BOARD_B_IP = "192.168.10.11" # 데이터를 받을 상대방 보드의 IP 주소
 UDP_PORT = 5005              # 데이터를 보낼 네트워크 포트 번호
 
-SCORE_THRESHOLD = 0.50       # AI 탐지 신뢰도 (0.50 미만은 무시)
-# 보드 B로 전송할 대상 클래스 번호 (0:사람, 1:자전거, 2:자동차, 3:오토바이)
-FILTER_CLASSES = [0, 1, 2, 3] 
-ALLOWED_NAMES = {0: 'Person', 1: 'Bicycle', 2: 'Car', 3: 'Motorcycle'}
+# 클래스별 개별 임계값 설정 (사람/자전거: 0.50, 차/오토바이: 0.35)
+CLASS_THRESHOLDS = {0: 0.50, 1: 0.50, 2: 0.35, 3: 0.35, 5: 0.35, 7: 0.35}
+
+# 보드 B로 전송할 대상 클래스 번호 (0:사람, 1:자전거, 2:자동차, 3:오토바이, 5:버스, 7:트럭)
+FILTER_CLASSES = [0, 1, 2, 3, 5, 7] 
+# 5(Bus), 7(Truck)도 Car로 표시되도록 매핑 추가
+ALLOWED_NAMES = {0: 'Person', 1: 'Bicycle', 2: 'Car', 3: 'Motorcycle', 5: 'Car', 7: 'Car'}
 
 # --- [2. YOLOv8 후처리 클래스] ---
 # AI 모델이 내뱉는 원시 데이터(Raw Data)를 좌표와 점수 형태로 가공하는 역할
 class YOLOv8PostProcess:
-    def __init__(self, score_thresh):
-        self.score_thresh = score_thresh
+    def __init__(self, thresholds):
+        self.thresholds = thresholds # 클래스별 임계값 딕셔너리
 
     def process(self, infer_results, img_w, img_h):
         detections = []
@@ -36,16 +39,25 @@ class YOLOv8PostProcess:
                     if class_idx not in FILTER_CLASSES: continue # 필터링 대상만 처리
                     if class_dets is None or len(class_dets) == 0: continue
                     
+                    # 해당 클래스의 임계값 가져오기 (없으면 기본 0.5)
+                    score_thresh = self.thresholds.get(class_idx, 0.5)
+                    
                     for det in class_dets:
                         if len(det) >= 5:
                             score = float(det[4]) # 4번 인덱스: 신뢰도 점수
-                            if score >= self.score_thresh:
+                            if score >= score_thresh:
                                 ymin, xmin, ymax, xmax = det[:4] # 0~3번: 박스 좌표(비율값)
+                                
+                                # [추가] 차종 통합: 버스(5), 트럭(7)을 자동차(2) ID로 변환하여 추적기 전달
+                                effective_cid = class_idx
+                                if class_idx in [5, 7]:
+                                    effective_cid = 2
+
                                 # 0~1 사이의 비율값을 실제 영상 픽셀 좌표(px)로 변환
                                 detections.append([
                                     float(xmin * img_w), float(ymin * img_h), 
                                     float(xmax * img_w), float(ymax * img_h), 
-                                    float(score), float(class_idx)
+                                    float(score), float(effective_cid)
                                 ])
         if not detections:
             return np.empty((0, 6), dtype=np.float32)
@@ -64,7 +76,7 @@ def draw_tracks(frame, tracks, cam_id):
         conf = float(trk[5]) # 점수
         cid = int(trk[6])   # 클래스 번호
         
-        if cid in FILTER_CLASSES:
+        if cid in ALLOWED_NAMES:
             w, h = x2 - x1, y2 - y1 # 가로, 세로 크기 계산
             
             # 보드 B 전송용 리스트 생성 (소수점 첫째자리까지 반올림)
@@ -123,11 +135,13 @@ def main():
     model_w, model_h = input_info.shape[1], input_info.shape[0] # 모델 입력 크기 (640x640)
 
     # 3. 각 카메라용 추적기(OcSort) 및 카메라 스트림 객체 생성
-    tracker0 = OcSort(det_thresh=SCORE_THRESHOLD, asso_threshold=0.3, use_byte=False)
-    tracker2 = OcSort(det_thresh=SCORE_THRESHOLD, asso_threshold=0.3, use_byte=False)
+    # [변경] 추적기의 임계값은 가장 낮은 기준인 0.35에 맞춤
+    tracker0 = OcSort(det_thresh=0.35, asso_threshold=0.3, use_byte=False)
+    tracker2 = OcSort(det_thresh=0.35, asso_threshold=0.3, use_byte=False)
     stream0 = CameraStream(CAM_SOURCES[0]).start()
     stream2 = CameraStream(CAM_SOURCES[1]).start()
-    post_proc = YOLOv8PostProcess(SCORE_THRESHOLD)
+    # [변경] SCORE_THRESHOLD 대신 CLASS_THRESHOLDS 딕셔너리 전달
+    post_proc = YOLOv8PostProcess(CLASS_THRESHOLDS)
     
     prev_time = time.time()
     print(f"보드 A(Hailo) 작동 중... 대상 IP: {BOARD_B_IP}:{UDP_PORT}")
@@ -151,7 +165,7 @@ def main():
                     resized = cv2.resize(frame, (model_w, model_h))
                     results = pipeline.infer({input_info.name: np.expand_dims(resized, axis=0)})
                     
-                    # (2) 후처리: 추론 결과를 픽셀 좌표로 변환
+                    # (2) 후처리: 추론 결과를 픽셀 좌표로 변환 (클래스별 임계값 및 차종 통합 적용)
                     dets = post_proc.process(results, frame.shape[1], frame.shape[0])
                     
                     # (3) 추적(Tracking): 이전 프레임과 객체를 매칭하여 ID 부여
