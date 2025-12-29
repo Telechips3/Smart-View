@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "string.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -60,6 +61,7 @@ UART_HandleTypeDef huart3;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -72,6 +74,8 @@ static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_SPI1_Init(void);
+void StartDefaultTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -82,6 +86,7 @@ static void MX_SPI1_Init(void);
 uint8_t rx_data;                // 1바이트 수신 임시 변수
 char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
 uint8_t rx_index = 0;
+volatile int data_ready = 0;
 /* USER CODE END 0 */
 
 /**
@@ -124,6 +129,36 @@ int main(void)
       // UART 수신 인터럽트 시작
   HAL_UART_Receive_IT(&huart3, &rx_data, 1);
   /* USER CODE END 2 */
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -466,53 +501,93 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart->Instance == USART3) {
-
-    // [추가된 코드] 받은 글자(rx_data)를 그대로 다시 PC로 전송 (Echo Back)
-    HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
-
-    // 1. 엔터키('\n' 또는 '\r') 감지 시 명령 실행
-    if (rx_data == '\n' || rx_data == '\r') {
-        rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
-
-        // (선택사항) 줄바꿈을 깔끔하게 하기 위해 추가 전송
-        uint8_t newline[] = "\r\n";
-        HAL_UART_Transmit(&huart3, newline, 2, 10);
-
-        if (rx_index > 0) {
-            if (rx_buffer[0] == 'r' || rx_buffer[0] == 'R') {
-                ADB_SetX(-1);
-                // 디버깅 메시지 출력 예시
-                printf("Mode: Reset (Full On)\r\n");
-            }
-            else {
-                int x_val = atoi(rx_buffer);
-                ADB_SetX(x_val);
-                // 디버깅 메시지 출력 예시
-                printf("Input X: %d\r\n", x_val);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART3) // 사용하는 UART 채널 확인
+    {
+    	HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
+        // 1. 엔터키('\n' or '\r')가 들어오면 완료 신호 보냄
+        if (rx_data == '\n' || rx_data == '\r')
+        {
+            rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
+            rx_index = 0;               // 인덱스 초기화
+            data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
+        }
+        else
+        {
+            if (rx_index < 10)
+            {
+                rx_buffer[rx_index++] = rx_data; // 버퍼에 담기
             }
         }
-        rx_index = 0;
-        memset(rx_buffer, 0, RX_BUFFER_SIZE);
-    }
-    else {
-        // 숫자면 버퍼에 담기
-        if (rx_index < RX_BUFFER_SIZE - 1) {
-            // 숫자나 'r' 같은 유효한 문자만 담기
-            rx_buffer[rx_index++] = rx_data;
-        }
-    }
 
-    // 다음 문자 수신 대기
-    HAL_UART_Receive_IT(&huart3, &rx_data, 1);
-  }
+        // 2. 다시 수신 대기 (필수!)
+        HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+    }
 }
 int _write(int file, char *ptr, int len) {
     HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
     return len;
 }
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+	ADB_Init();
+
+	HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  /* Infinite loop */
+  for(;;)
+  {
+	  if (data_ready == 1)
+	  {
+	      data_ready = 0; // 플래그 클리어
+
+	      // 문자열을 숫자로 변환
+	      int x_coordinate = atoi((char*)rx_buffer);
+
+	      printf("Target X: %d\r\n", x_coordinate);
+
+	      // ====================================================
+	      // 4. 핵심 로직 실행 (보여주신 함수 사용)
+	      // ====================================================
+	      // 이 함수가 알아서 계산하고, 마스킹하고, Flush까지 다 수행합니다.
+	      ADB_SetX(x_coordinate);
+	  }
+	  osDelay(10);
+  }
+  /* USER CODE END 5 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
