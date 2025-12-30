@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "string.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -27,6 +28,7 @@
 #include <string.h> // memset
 #include <stdlib.h>
 #include <stdio.h>
+#include "rear_display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,6 +55,8 @@ ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptor
 ETH_HandleTypeDef heth;
 
 SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi2;
+SPI_HandleTypeDef hspi5;
 
 TIM_HandleTypeDef htim2;
 
@@ -60,6 +64,8 @@ UART_HandleTypeDef huart3;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
+osThreadId defaultTaskHandle;
+osThreadId RearTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -72,16 +78,24 @@ static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_SPI5_Init(void);
+static void MX_SPI2_Init(void);
+void StartDefaultTask(void const * argument);
+void StartRearTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define RX_BUFFER_SIZE 10
-uint8_t rx_data;                // 1바이트 수신 임시 변수
-char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
-uint8_t rx_index = 0;
+//#define RX_BUFFER_SIZE 10
+//uint8_t rx_data;                // 1바이트 수신 임시 변수
+//char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
+//uint8_t rx_index = 0;
+//volatile int data_ready = 0;
+SPI_Packet_t rx_packet_spi;
+volatile int spi_data_ready = 0;
 /* USER CODE END 0 */
 
 /**
@@ -118,12 +132,51 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   MX_TIM2_Init();
   MX_SPI1_Init();
+  MX_SPI5_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   ADB_Init(); // LED 전체 켜기 상태로 시작
 
       // UART 수신 인터럽트 시작
-  HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  //HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+
+
   /* USER CODE END 2 */
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of RearTask */
+  osThreadDef(RearTask, StartRearTask, osPriorityHigh, 0, 128);
+  RearTaskHandle = osThreadCreate(osThread(RearTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -272,6 +325,81 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief SPI2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI2_Init(void)
+{
+
+  /* USER CODE BEGIN SPI2_Init 0 */
+
+  /* USER CODE END SPI2_Init 0 */
+
+  /* USER CODE BEGIN SPI2_Init 1 */
+
+  /* USER CODE END SPI2_Init 1 */
+  /* SPI2 parameter configuration*/
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_SLAVE;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI2_Init 2 */
+
+  /* USER CODE END SPI2_Init 2 */
+
+}
+
+/**
+  * @brief SPI5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI5_Init(void)
+{
+
+  /* USER CODE BEGIN SPI5_Init 0 */
+
+  /* USER CODE END SPI5_Init 0 */
+
+  /* USER CODE BEGIN SPI5_Init 1 */
+
+  /* USER CODE END SPI5_Init 1 */
+  /* SPI5 parameter configuration*/
+  hspi5.Instance = SPI5;
+  hspi5.Init.Mode = SPI_MODE_MASTER;
+  hspi5.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi5.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi5.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi5.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi5.Init.NSS = SPI_NSS_SOFT;
+  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi5.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi5.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi5.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi5.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI5_Init 2 */
+
+  /* USER CODE END SPI5_Init 2 */
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -411,21 +539,42 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
+                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(MAX7219_CS1_GPIO_Port, MAX7219_CS1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOG, MAX7219_CS2_Pin|USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : ROW3_Pin COL2_Pin COL3_Pin COL7_Pin
+                           COL5_Pin ROW2_Pin COL4_Pin ROW1_Pin */
+  GPIO_InitStruct.Pin = ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
+                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USER_Btn_Pin */
   GPIO_InitStruct.Pin = USER_Btn_Pin;
@@ -433,12 +582,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : MAX7219_CS_Pin */
-  GPIO_InitStruct.Pin = MAX7219_CS_Pin;
+  /*Configure GPIO pin : MAX7219_CS1_Pin */
+  GPIO_InitStruct.Pin = MAX7219_CS1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(MAX7219_CS_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(MAX7219_CS1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
@@ -447,12 +596,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : USB_PowerSwitchOn_Pin */
-  GPIO_InitStruct.Pin = USB_PowerSwitchOn_Pin;
+  /*Configure GPIO pins : MAX7219_CS2_Pin USB_PowerSwitchOn_Pin */
+  GPIO_InitStruct.Pin = MAX7219_CS2_Pin|USB_PowerSwitchOn_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(USB_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USB_OverCurrent_Pin */
   GPIO_InitStruct.Pin = USB_OverCurrent_Pin;
@@ -460,59 +609,163 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : ROW6_Pin ROW8_Pin ROW7_Pin ROW5_Pin */
+  GPIO_InitStruct.Pin = ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : COL8_Pin COL6_Pin ROW4_Pin COL1_Pin */
+  GPIO_InitStruct.Pin = COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(MAX7219_CS1_GPIO_Port, MAX7219_CS1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(MAX7219_CS2_GPIO_Port, MAX7219_CS2_Pin, GPIO_PIN_SET);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart->Instance == USART3) {
-
-    // [추가된 코드] 받은 글자(rx_data)를 그대로 다시 PC로 전송 (Echo Back)
-    HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
-
-    // 1. 엔터키('\n' 또는 '\r') 감지 시 명령 실행
-    if (rx_data == '\n' || rx_data == '\r') {
-        rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
-
-        // (선택사항) 줄바꿈을 깔끔하게 하기 위해 추가 전송
-        uint8_t newline[] = "\r\n";
-        HAL_UART_Transmit(&huart3, newline, 2, 10);
-
-        if (rx_index > 0) {
-            if (rx_buffer[0] == 'r' || rx_buffer[0] == 'R') {
-                ADB_SetX(-1);
-                // 디버깅 메시지 출력 예시
-                printf("Mode: Reset (Full On)\r\n");
-            }
-            else {
-                int x_val = atoi(rx_buffer);
-                ADB_SetX(x_val);
-                // 디버깅 메시지 출력 예시
-                printf("Input X: %d\r\n", x_val);
-            }
-        }
-        rx_index = 0;
-        memset(rx_buffer, 0, RX_BUFFER_SIZE);
-    }
-    else {
-        // 숫자면 버퍼에 담기
-        if (rx_index < RX_BUFFER_SIZE - 1) {
-            // 숫자나 'r' 같은 유효한 문자만 담기
-            rx_buffer[rx_index++] = rx_data;
-        }
-    }
-
-    // 다음 문자 수신 대기
-    HAL_UART_Receive_IT(&huart3, &rx_data, 1);
-  }
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//{
+//    if (huart->Instance == USART3) // 사용하는 UART 채널 확인
+//    {
+//    	HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
+//        // 1. 엔터키('\n' or '\r')가 들어오면 완료 신호 보냄
+//        if (rx_data == '\n' || rx_data == '\r')
+//        {
+//        	if(rx_index > 0){
+//        		rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
+//        		rx_index = 0;               // 인덱스 초기화
+//        		data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
+//        	}
+//        }
+//        else
+//        {
+//            if (rx_index < 10)
+//            {
+//                rx_buffer[rx_index++] = rx_data; // 버퍼에 담기
+//            }
+//        }
+//
+//        // 2. 다시 수신 대기 (필수!)
+//        HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+//    }
+//}
+//int _write(int file, char *ptr, int len) {
+//    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
+//    return len;
+//}
+static uint8_t xor_checksum(const uint8_t *p, size_t n) {
+    uint8_t x = 0;
+    for (size_t i = 0; i < n; i++) x ^= p[i];
+    return x;
 }
-int _write(int file, char *ptr, int len) {
-    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
-    return len;
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI2)
+    {
+        // 0xAA 헤더 확인 및 체크섬
+        if (rx_packet_spi.header == 0xAA) {
+            uint8_t sum = xor_checksum((uint8_t*)&rx_packet_spi, PACKET_SIZE - 1);
+            if (sum == rx_packet_spi.checksum) {
+                spi_data_ready = 1;
+            }
+        }
+
+        // ★ 다음 패킷 수신 대기 (송신 버퍼 없이 수신만)
+        HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+    }
 }
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  ADB_Init();
+  MX_SPI2_Init();
+
+  // ★ 변경됨: 송신 버퍼 없이 '수신'만 시작
+  HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+
+  for(;;)
+  {
+      if (spi_data_ready == 1)
+      {
+          spi_data_ready = 0;
+
+          // 1. 데이터 파싱
+          int16_t target_x = (int16_t)rx_packet_spi.bbox_x;
+          float target_dist = rx_packet_spi.distance;
+
+          // 2. ADB & Rear 제어
+          if (rx_packet_spi.detected) {
+              ADB_SetX(target_x);
+          } else {
+              ADB_SetX(-1);
+          }
+          RearDisplay_SetDistance(target_dist);
+      }
+      osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartRearTask */
+/*
+* @brief Function implementing the RearTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartRearTask */
+void StartRearTask(void const * argument)
+{
+  /* USER CODE BEGIN StartRearTask */
+	RearDisplay_Init();
+
+	RearDisplay_SetDistance(100.0f);
+  /* Infinite loop */
+  for(;;)
+  {
+	  RearDisplay_UpdateScan();
+
+	  osDelay(1);
+  }
+  /* USER CODE END StartRearTask */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

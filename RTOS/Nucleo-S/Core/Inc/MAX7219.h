@@ -3,7 +3,7 @@
 
 #include "main.h" // STM32 HAL 정의 포함
 
-// --- 1. 업로드하신 파일의 레지스터 정의 유지 ---
+// --- 1. MAX7219 레지스터 정의 ---
 #define MAX7219_REG_NOOP        0x00
 #define MAX7219_REG_DIGIT0      0x01
 #define MAX7219_REG_DIGIT1      0x02
@@ -20,20 +20,24 @@
 #define MAX7219_REG_DISPLAYTEST 0x0F
 
 // --- 2. 사용자 설정 ---
-#define MAX7219_NUM_DEVICES     2     // 8x16 매트릭스이므로 2개 연결
-#define MAX7219_SPI_PORT        hspi1 // 사용하시는 SPI 핸들러
-extern SPI_HandleTypeDef MAX7219_SPI_PORT;
+#define MAX7219_NUM_DEVICES     4     // 총 4개 모듈 (8x16 × 2개 헤드라이트)
 
-// CS 핀 (CubeMX에서 설정한 핀 이름)
-#define MAX7219_CS_PORT         MAX7219_CS_GPIO_Port
-#define MAX7219_CS_PIN          MAX7219_CS_Pin
+// SPI 핸들러
+extern SPI_HandleTypeDef hspi1;  // 왼쪽 헤드라이트용
+extern SPI_HandleTypeDef hspi5;  // 오른쪽 헤드라이트용
 
-// --- 3. 함수 프로토타입 (C언어 스타일) ---
+// CS 핀 정의
+#define MAX7219_CS1_PORT        MAX7219_CS1_GPIO_Port
+#define MAX7219_CS1_PIN         MAX7219_CS1_Pin
+#define MAX7219_CS2_PORT        MAX7219_CS2_GPIO_Port
+#define MAX7219_CS2_PIN         MAX7219_CS2_Pin
+
+// --- 3. 함수 프로토타입 ---
 void MAX7219_Init(void);
 void MAX7219_Write(uint8_t device_idx, uint8_t reg, uint8_t data);
 void MAX7219_Clear(void);
 void MAX7219_SetIntensity(uint8_t intensity); // 밝기 조절 (0~15)
-void MAX7219_UpdateBuffer(uint8_t device_idx, uint8_t row, uint8_t data); // 버퍼만 업데이트
-void MAX7219_Flush(void); // 버퍼 내용을 화면에 쏘기
+void MAX7219_UpdateBuffer(uint8_t device_idx, uint8_t row, uint8_t data);
+void MAX7219_Flush(void);
 
 #endif
