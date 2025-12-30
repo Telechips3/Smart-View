@@ -5,8 +5,9 @@
 #include "MAX7219.h" // MAX7219 드라이버 포함
 
 // 카메라 및 LED 설정
-#define CAM_WIDTH   640
-#define LED_COLS    16      // 8x8 모듈 2개 = 16열
+#define CAM_WIDTH 640
+#define HALF_WIDTH 320
+#define MODULE_COLS 8  // 각 모듈당 8열
 
 // 함수 프로토타입
 void ADB_Init(void);
