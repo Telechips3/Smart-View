@@ -28,6 +28,7 @@
 #include <string.h> // memset
 #include <stdlib.h>
 #include <stdio.h>
+#include "rear_display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +63,7 @@ UART_HandleTypeDef huart3;
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 osThreadId defaultTaskHandle;
+osThreadId RearTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -75,6 +77,7 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
+void StartRearTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -150,6 +153,10 @@ int main(void)
   /* definition and creation of defaultTask */
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of RearTask */
+  osThreadDef(RearTask, StartRearTask, osPriorityNormal, 0, 128);
+  RearTaskHandle = osThreadCreate(osThread(RearTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -446,12 +453,17 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
+                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_RESET);
@@ -461,6 +473,21 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : ROW3_Pin COL2_Pin COL3_Pin COL7_Pin
+                           COL5_Pin ROW2_Pin COL4_Pin ROW1_Pin */
+  GPIO_InitStruct.Pin = ROW3_Pin|COL2_Pin|COL3_Pin|COL7_Pin
+                          |COL5_Pin|ROW2_Pin|COL4_Pin|ROW1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USER_Btn_Pin */
   GPIO_InitStruct.Pin = USER_Btn_Pin;
@@ -495,6 +522,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : ROW6_Pin ROW8_Pin ROW7_Pin ROW5_Pin */
+  GPIO_InitStruct.Pin = ROW6_Pin|ROW8_Pin|ROW7_Pin|ROW5_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : COL8_Pin COL6_Pin ROW4_Pin COL1_Pin */
+  GPIO_InitStruct.Pin = COL8_Pin|COL6_Pin|ROW4_Pin|COL1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   HAL_GPIO_WritePin(MAX7219_CS_GPIO_Port, MAX7219_CS_Pin, GPIO_PIN_SET);
   /* USER CODE END MX_GPIO_Init_2 */
@@ -509,9 +550,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         // 1. 엔터키('\n' or '\r')가 들어오면 완료 신호 보냄
         if (rx_data == '\n' || rx_data == '\r')
         {
-            rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
-            rx_index = 0;               // 인덱스 초기화
-            data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
+        	if(rx_index > 0){
+        		rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
+        		rx_index = 0;               // 인덱스 초기화
+        		data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
+        	}
         }
         else
         {
@@ -561,10 +604,49 @@ void StartDefaultTask(void const * argument)
 	      // ====================================================
 	      // 이 함수가 알아서 계산하고, 마스킹하고, Flush까지 다 수행합니다.
 	      ADB_SetX(x_coordinate);
+
+	      //x좌표에 따른 이모티콘 출력
+	      if(x_coordinate < 100)
+	      {
+	    	  RearDisplay_SetDistance(20.0f);
+	      }
+	      else if(x_coordinate < 500)
+	      {
+	    	  RearDisplay_SetDistance(50.0f);
+	      }
+	      else
+	      {
+	    	  RearDisplay_SetDistance(100.0f);
+	      }
 	  }
+
 	  osDelay(10);
+
   }
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartRearTask */
+/**
+* @brief Function implementing the RearTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartRearTask */
+void StartRearTask(void const * argument)
+{
+  /* USER CODE BEGIN StartRearTask */
+	RearDisplay_Init();
+
+	RearDisplay_SetDistance(100.0f);
+  /* Infinite loop */
+  for(;;)
+  {
+	  RearDisplay_UpdateScan();
+
+	  osDelay(1);
+  }
+  /* USER CODE END StartRearTask */
 }
 
 /**
