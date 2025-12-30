@@ -111,7 +111,31 @@ void Error_Handler(void);
 #define LD2_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+#pragma pack(push, 1)
 
+typedef struct {
+    uint8_t  header;    // 0xAA (Start Byte)
+    uint8_t  detected;  // Detect Flag (1 Byte)
+    uint8_t class_ID;
+    float timestamp; // Time (2 Bytes)
+    float    distance;  // Distance (4 Bytes)
+    float    bbox_x;    // BBox X (4 Bytes)
+    float    bbox_y;    // BBox Y (4 Bytes)
+    float	bbox_h;
+    float	bbox_w;
+    uint8_t  checksum;  // CRC/XOR Checksum (1 Byte)
+} SPI_Packet_t;
+
+#pragma pack(pop)
+
+// 2. 공용체 정의 (배열 <-> 구조체 변환용)
+typedef union {
+    uint8_t       buffer[sizeof(SPI_Packet_t)];
+    SPI_Packet_t data;
+} Shared_Buffer_t;
+
+// 3. 패킷 사이즈 정의 (28 Bytes)
+#define PACKET_SIZE sizeof(SPI_Packet_t)
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

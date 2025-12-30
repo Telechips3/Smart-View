@@ -23,30 +23,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-/* 시스템 상태 정의 */
-typedef enum {
-    STATE_MONITORING, // 대기 모드 (안전)
-    STATE_WARNING,    // 주의 모드 (사람 감지)
-    STATE_LOCK,       // 잠금 모드 (이륜차 감지)
-    STATE_UNLOCK,     // 문 열림
-    STATE_HOLD_LOCK,  // 락 유지 (강제 잠금)
-    STATE_EXIT        // 하차 완료
-} SystemState_t;
 
-/* 센서 데이터 구조체 (Queue로 전달 가능) */
-typedef struct {
-    uint8_t objectType; // 0: None, 1: Person, 2: Bike
-    float distance;     // 거리 (m)
-    uint8_t btnState;   // 0: None, 1: Short, 2: Long(3s)
-} SensorData_t;
-
-// 전역 변수 혹은 Queue를 통해 공유될 현재 상태
-SystemState_t currentState = STATE_MONITORING;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -67,24 +50,64 @@ ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptor
 
 ETH_HandleTypeDef heth;
 
-TIM_HandleTypeDef htim3;
+SPI_HandleTypeDef hspi1;
+
+TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart3;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 osThreadId defaultTaskHandle;
-osThreadId myTask02Handle;
-osThreadId myTask03Handle;
-osThreadId myTask04Handle;
-
+osThreadId Cruize_LogicHandle;
+osThreadId Cruize_ControlHandle;
 /* USER CODE BEGIN PV */
-SemaphoreHandle_t sema_btn = NULL;
-SemaphoreHandle_t sema_door = NULL;
-volatile uint8_t danger_state = 0;				// 3state, 0 -> 안전 1-> 주의 2-> 위험
-volatile uint8_t button_pressed = 0;
-volatile uint8_t door_locked = 0;
-volatile uint16_t dist = 0;
+
+#define SAFE_DECEL  3.0f  		// 감속 제어 값
+#define SAFE_ACCEL   2.5f  		// 가속 제어 값
+#define PWM_MAX_VALUE 4499      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
+#define PWM_STEP 5.0f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
+#define INF_DIST 99.0f
+#define DETECT_TIMEOUT_MS 1000
+
+typedef enum{
+	Front = 0,
+	Rear = 1
+} DetectionDir;
+
+typedef enum {
+    ACTION_MAINTAIN = 0,
+    ACTION_DECELERATE,
+    ACTION_ACCELERATE
+} ActionState;
+
+typedef struct {		//주행 시스템 위한 structure
+	float distFront;
+	uint8_t detectedFront;      // 전방 물체 유무
+	    // 후방 데이터
+	float distRear;
+	uint8_t detectedRear;       // 후방 물체 유무
+
+	float targetSpeed;          // 내 설정 속도 (%)
+	float safeDistThreshold;    // 안전거리 임계값
+	uint8_t isEnabled;
+} VehicleStatus;
+
+typedef struct {
+    VehicleStatus vs;
+    uint32_t lastFrontTick;
+    uint32_t lastRearTick;
+} VehicleBoard;
+
+uint8_t spi_tx_dummy[PACKET_SIZE] = {0};
+int32_t current_duty = 0;       // 현재 적용된 PWM Duty 값
+
+volatile VehicleBoard g_board;
+
+VehicleStatus g_status;
+volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속도 상태
+Shared_Buffer_t g_spi_buf;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,11 +116,11 @@ static void MX_GPIO_Init(void);
 static void MX_ETH_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
-static void MX_TIM3_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
-void StartTask02(void const * argument);
-void StartTask03(void const * argument);
-void StartTask04(void const * argument);
+void Cruize_LogicTask(void const * argument);
+void Cruize_ControlTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -140,17 +163,23 @@ int main(void)
   MX_ETH_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
-  MX_TIM3_Init();
+  MX_TIM2_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  memset((void*)&g_board, 0, sizeof(g_board));
+  g_board.vs.distFront = INF_DIST;
+  g_board.vs.distRear  = INF_DIST;
 
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  g_status.isEnabled = 1; // 테스트를 위해 기본 활성화
+  g_status.targetSpeed = 80.0f;
+
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);   // IN1
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
-  sema_btn = xSemaphoreCreateBinary();
-  if (sema_btn == NULL) {
-      Error_Handler(); // 메모리 부족 시 예외 처리
-  }
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -163,6 +192,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -170,17 +200,13 @@ int main(void)
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-  /* definition and creation of myTask02 */
-  osThreadDef(myTask02, StartTask02, osPriorityIdle, 0, 128);
-  myTask02Handle = osThreadCreate(osThread(myTask02), NULL);
+  /* definition and creation of Cruize_Logic */
+  osThreadDef(Cruize_Logic, Cruize_LogicTask, osPriorityIdle, 0, 128);
+  Cruize_LogicHandle = osThreadCreate(osThread(Cruize_Logic), NULL);
 
-  /* definition and creation of myTask03 */
-  osThreadDef(myTask03, StartTask03, osPriorityIdle, 0, 128);
-  myTask03Handle = osThreadCreate(osThread(myTask03), NULL);
-
-  /* definition and creation of myTask04 */
-  osThreadDef(myTask04, StartTask04, osPriorityIdle, 0, 128);
-  myTask04Handle = osThreadCreate(osThread(myTask04), NULL);
+  /* definition and creation of Cruize_Control */
+  osThreadDef(Cruize_Control, Cruize_ControlTask, osPriorityHigh, 0, 128);
+  Cruize_ControlHandle = osThreadCreate(osThread(Cruize_Control), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -198,16 +224,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-      if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET)
-          {
-              // 버튼 눌림 (Pull-Up 기준)
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);   // 부저 ON
-          }
-          else
-          {
-              // 버튼 안 눌림
-              HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // 부저 OFF
-          }
   }
   /* USER CODE END 3 */
 }
@@ -307,46 +323,73 @@ static void MX_ETH_Init(void)
 }
 
 /**
-  * @brief TIM3 Initialization Function
+  * @brief SPI1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM3_Init(void)
+static void MX_SPI1_Init(void)
 {
 
-  /* USER CODE BEGIN TIM3_Init 0 */
+  /* USER CODE BEGIN SPI1_Init 0 */
 
-  /* USER CODE END TIM3_Init 0 */
+  /* USER CODE END SPI1_Init 0 */
 
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_SLAVE;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
 
-  /* USER CODE BEGIN TIM3_Init 1 */
+  /* USER CODE BEGIN TIM2_Init 1 */
 
-  /* USER CODE END TIM3_Init 1 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 83;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 19999;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4500-1;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
   {
     Error_Handler();
   }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -354,14 +397,14 @@ static void MX_TIM3_Init(void)
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM3_Init 2 */
+  /* USER CODE BEGIN TIM2_Init 2 */
 
-  /* USER CODE END TIM3_Init 2 */
-  HAL_TIM_MspPostInit(&htim3);
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -454,13 +497,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : USER_Btn_Pin */
   GPIO_InitStruct.Pin = USER_Btn_Pin;
@@ -468,24 +511,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USB_PowerSwitchOn_Pin */
@@ -501,12 +531,164 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : PD0 PD1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+static inline uint32_t nowTickISR(void){
+    return xTaskGetTickCountFromISR(); // ISR에서만
+}
+
+static inline uint32_t nowTick(void){
+    return xTaskGetTickCount();        // Task에서만
+}
+
+static void BoardTimeoutUpdate(void)
+{
+    uint32_t now = xTaskGetTickCount();
+    uint32_t timeout = pdMS_TO_TICKS(DETECT_TIMEOUT_MS);
+
+    taskENTER_CRITICAL();
+    if (g_board.vs.detectedFront && (now - g_board.lastFrontTick > timeout)) {
+        g_board.vs.detectedFront = 0;
+        g_board.vs.distFront = INF_DIST;
+    }
+    if (g_board.vs.detectedRear && (now - g_board.lastRearTick > timeout)) {
+        g_board.vs.detectedRear = 0;
+        g_board.vs.distRear = INF_DIST;
+    }
+    taskEXIT_CRITICAL();
+}
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance != SPI1) return;
+
+    // 디버그 LED
+    HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
+
+    // 1) Header 체크
+    if (g_spi_buf.data.header != 0xAA)
+        goto restart;
+
+    // 2) Checksum
+    uint8_t cs = 0;
+    for (int i = 0; i < PACKET_SIZE - 1; i++)
+        cs ^= g_spi_buf.buffer[i];
+
+    if (cs != g_spi_buf.data.checksum)
+        goto restart;
+
+    // 3) Detected 아니면 무시(너 정책)
+    if (g_spi_buf.data.detected == 0)
+        goto restart;
+
+    // 4) front/rear 판별 기준 (지금은 bbox_x로)
+    //    bbox_x > 0 : front, else rear
+    uint32_t now = xTaskGetTickCountFromISR();
+
+    // ISR 크리티컬 (FreeRTOS)
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+    if (g_spi_buf.data.bbox_x > 0) {
+        g_board.vs.detectedFront = 1;
+        g_board.vs.distFront = g_spi_buf.data.distance;
+        g_board.lastFrontTick = now;
+    } else {
+        g_board.vs.detectedRear = 1;
+        g_board.vs.distRear = g_spi_buf.data.distance;
+        g_board.lastRearTick = now;
+    }
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+
+restart:
+    // ⭐ 반드시 재시작
+    HAL_SPI_TransmitReceive_IT(
+        hspi,
+        spi_tx_dummy,
+        g_spi_buf.buffer,
+        PACKET_SIZE
+    );
+}
+
+static void DecideActionFromBoard(void)
+{
+    // 안전거리 계산
+    g_status.safeDistThreshold = (g_status.targetSpeed * 0.2f) + 2.0f;
+
+    // 상황판 스냅샷을 g_status로 복사해서 쓰면 더 안전
+    taskENTER_CRITICAL();
+    g_status.detectedFront = g_board.vs.detectedFront;
+    g_status.distFront     = g_board.vs.distFront;
+    g_status.detectedRear  = g_board.vs.detectedRear;
+    g_status.distRear      = g_board.vs.distRear;
+    taskEXIT_CRITICAL();
+
+    if (g_status.detectedFront && g_status.distFront < g_status.safeDistThreshold) {
+        currentAction = ACTION_DECELERATE;
+    }
+    else if (g_status.detectedRear && g_status.distRear < g_status.safeDistThreshold) {
+        currentAction = ACTION_ACCELERATE;
+    }
+    else {
+        currentAction = ACTION_MAINTAIN;
+    }
+}
+
+void Maintain_TargetSpeed(float target) {
+	// target 값을 기반으로 PWM 수치를 결정 (단순 맵핑)
+	    // 예: target이 0~100(%) 이라면 ARR 값에 비례하게 설정
+
+	    current_duty = (int32_t)(target * (PWM_MAX_VALUE / 100.0f));
+
+	    // 안전을 위한 범위 제한
+	    if (current_duty > PWM_MAX_VALUE) current_duty = PWM_MAX_VALUE;
+	    if (current_duty < 0) current_duty = 0;
+
+	    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (uint32_t)current_duty);
+}
+
+void Apply_Acceleration(float accel_value)
+{
+    // 1. 방향 제어 (Forward) - 모터 드라이버 IN 핀 설정
+	 HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);   // IN1
+	 HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
+
+    // 2. 가속도에 따른 Duty 증가
+    current_duty += (int32_t)(accel_value * PWM_STEP);
+
+    // 3. Max Limit 제한
+    if (current_duty > PWM_MAX_VALUE) current_duty = PWM_MAX_VALUE;
+
+    // 4. TIM2 채널 1에 PWM 적용
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (uint32_t)current_duty);
+}
+
+void Apply_Deceleration(float decel_value)
+{
+    // 1. 방향 유지 (Forward)
+	 HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);   // IN1
+	 HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
+
+    // 2. 감속도에 따른 Duty 감소 (decel_value가 음수면 더하기, 양수면 빼기로 로직 통일 필요)
+    // 여기서는 decel_value가 -3.0f로 들어온다고 가정하여 더해줍니다.
+    current_duty -= (int32_t)(decel_value * PWM_STEP);
+
+    // 3. Min Limit 제한 (정지 상태 이하로 떨어지지 않게)
+    if (current_duty < 0) current_duty = 0;
+
+    // 4. TIM2 채널 1에 PWM 적용
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (uint32_t)current_duty);
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -519,157 +701,65 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+
   /* Infinite loop */
   for(;;)
   {
-
-
     osDelay(1);
   }
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_StartTask02 */
+/* USER CODE BEGIN Header_Cruize_LogicTask */
 /**
-* @brief Function implementing the myTask02 thread.
+* @brief Function implementing the Cruize_Logic thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask02 */
-/* Logic Task 함수 */
-void StartLogicTask(void const * argument)
+/* USER CODE END Header_Cruize_LogicTask */
+void Cruize_LogicTask(void const * argument)
 {
-  /* 센서 데이터 (가상의 전역변수나 Queue에서 읽어온다고 가정) */
-  extern SensorData_t currentSensorData;
+  /* USER CODE BEGIN Cruize_LogicTask */
+	HAL_SPI_TransmitReceive_IT(&hspi1, spi_tx_dummy, g_spi_buf.buffer, PACKET_SIZE);
+  /* Infinite loop */
+    for (;;)
+    {
+        if (!g_status.isEnabled) {
+            osDelay(50);
+            continue;
+        }
 
+        BoardTimeoutUpdate();
+        DecideActionFromBoard();
+
+        osDelay(10);
+    }
+  /* USER CODE END Cruize_LogicTask */
+}
+
+/* USER CODE BEGIN Header_Cruize_ControlTask */
+/**
+* @brief Function implementing the Cruize_Control thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Cruize_ControlTask */
+void Cruize_ControlTask(void const * argument)
+{
+  /* USER CODE BEGIN Cruize_ControlTask */
+  /* Infinite loop */
   for(;;)
   {
-    // 1. 초기 상태 결정 (모니터링 / 주의 / 잠금)
-    if (currentSensorData.objectType == 2 && currentSensorData.distance < 6.0f) {
-        // 이륜차 & 6m 미만 -> 잠금 모드
-        if (currentState != STATE_HOLD_LOCK) currentState = STATE_LOCK;
-    }
-    else if (currentSensorData.objectType == 1 && currentSensorData.distance < 6.0f) {
-        // 사람 & 6m 미만 -> 주의 모드
-        if (currentState != STATE_LOCK && currentState != STATE_HOLD_LOCK)
-            currentState = STATE_WARNING;
-    }
-    else if (currentSensorData.objectType == 1 && currentSensorData.distance < 6.0f) {
-            // 사람 & 6m 미만 -> 주의 모드
-            if (currentState != STATE_LOCK && currentState != STATE_HOLD_LOCK)
-                currentState = STATE_WARNING;
-        }
-    else {
-        // 안전 거리 확보 -> 대기 모드
-        if (currentState != STATE_UNLOCK && currentState != STATE_EXIT)
-            currentState = STATE_MONITORING;
-    }
-
-    // 2. 버튼 입력 및 상태 전이 로직
-    switch (currentState) {
-        case STATE_MONITORING:
-        case STATE_WARNING:
-            // 하차 버튼 누르면 -> 문 열림
-            if (currentSensorData.btnState == 1) {
-                currentState = STATE_UNLOCK;
-            }
-            break;
-
-        case STATE_LOCK:
-            // 이륜차 감지 중 or 버튼 3초 이상 누름 -> 락 유지
-            if (currentSensorData.objectType == 2) {
-                currentState = STATE_HOLD_LOCK;
-            }
-            break;
-
-        case STATE_UNLOCK:
-            // 문이 열려있더라도 위험 상황(이륜차/Long Press) 발생 시 -> 락 유지(닫음)
-            if (currentSensorData.objectType == 2) {
-                currentState = STATE_HOLD_LOCK;
-            }
-            // 일정 시간 후 하차 완료 처리 로직 추가 가능
-            break;
-
-        case STATE_HOLD_LOCK:
-            // 위험 요소 사라지면 다시 모니터링/잠금 상태로 복귀 로직 필요
-            if (currentSensorData.objectType == 0 && currentSensorData.btnState == 0) {
-                 currentState = STATE_MONITORING;
-            }
-            break;
-    }
-
-    osDelay(10); // 10ms 주기
+	  if(g_status.isEnabled) {
+      switch(currentAction) {
+          case ACTION_ACCELERATE: Apply_Acceleration(SAFE_ACCEL); break;
+          case ACTION_DECELERATE: Apply_Deceleration(SAFE_DECEL); break;
+          case ACTION_MAINTAIN:   Maintain_TargetSpeed(g_status.targetSpeed); break;
+      }
   }
-}
-/* USER CODE BEGIN Header_StartTask03 */
-/**
-* @brief Function implementing the myTask03 thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask03 */
-void CheckButtonState(void) {
-    static uint32_t pressStartTime = 0;
-    static uint8_t isPressed = 0;
-
-    // 버튼 눌림 (Low Active 가정)
-    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET) {
-        if (isPressed == 0) {
-            isPressed = 1;
-            pressStartTime = HAL_GetTick(); // 누른 시간 기록
-        }
-
-        // 3초 이상 누르고 있는 중인지 체크
-        if ((HAL_GetTick() - pressStartTime) > 3000) {
-            currentSensorData.btnState = 2; // Long Press 감지
-        }
-    }
-    else {
-        // 버튼 뗌
-        if (isPressed == 1) {
-            // 3초 미만으로 눌렀다 뗐다면 Short Press
-            if ((HAL_GetTick() - pressStartTime) < 3000) {
-                currentSensorData.btnState = 1; // Short Press
-            }
-            isPressed = 0;
-        } else {
-             currentSensorData.btnState = 0; // None
-        }
-    }
-}
-/* USER CODE BEGIN Header_StartTask04 */
-/**
-* @brief Function implementing the myTask04 thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask04 */
-void ControlServo(SystemState_t state)
-{
-    uint32_t pulse = 0;
-
-    switch(state) {
-        case STATE_UNLOCK:
-        case STATE_EXIT:
-            // 문 열림 (90도 가정) -> CCR값 조절 (시스템 클럭에 따라 계산 필요)
-            // 예: Prescaler 설정으로 1 tick = 1us라 가정시 1500us = 90도
-            pulse = 1500;
-            break;
-
-        case STATE_LOCK:
-        case STATE_HOLD_LOCK:
-            // 문 잠금 (0도 가정)
-            pulse = 500; // 0.5ms
-            break;
-
-        default:
-            // 평소 상태 (닫힘 유지)
-            pulse = 500;
-            break;
-    }
-
-    // PWM 듀티 사이클 업데이트
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulse);
+    osDelay(20);
+  }
+  /* USER CODE END Cruize_ControlTask */
 }
 
 /**
