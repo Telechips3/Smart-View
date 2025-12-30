@@ -9,6 +9,7 @@
 #include <chrono>
 #include "nlohmann/json.hpp"
 #include "ydlidar_sdk.h"
+#include "../spi/common/protocol.h"
 
 using namespace cv;
 using namespace std;
@@ -19,37 +20,68 @@ using json = nlohmann::json;
 #define UDP_PORT 5005
 #define LIDAR_SCALE 2.0f 
 
-struct Detection {
+typedef struct Detection {
     int cam_id;
+    int class_id;
     Rect box;
-};
+}Detection_t;
+
+UART_Packet_t abcd;
+int spi_dev_fd = -1;
 
 void renderFusion(Mat& canvas, const vector<Point3f>& pts3d, const Mat& mtx, const Mat& dist, 
-                  const Mat& rvec, const Mat& tvec, const vector<Detection>& dets, int target_id, Scalar ptColor, double fps) {
-    
+                  const Mat& rvec, const Mat& tvec, const vector<Detection>& dets, int target_id, Scalar ptColor, double fps, LaserFan* scan) {
+    abcd.header = 0xAA;
     if (!pts3d.empty()) {
         vector<Point2f> pts2d;
         projectPoints(pts3d, rvec, tvec, mtx, dist, pts2d);
 
-        vector<Rect> active_boxes;
+        vector<Detection_t> active_boxes;
         for (const auto& d : dets) {
-            if (d.cam_id == target_id) active_boxes.push_back(d.box);
+            if (d.cam_id == target_id) active_boxes.push_back(d);
         }
-
+        int i = 0;
         for (const auto& p : pts2d) {
             Point2f scaled_p(p.x * LIDAR_SCALE, p.y * LIDAR_SCALE);
             if (scaled_p.x >= 0 && scaled_p.x < canvas.cols && scaled_p.y >= 0 && scaled_p.y < canvas.rows) {
                 bool inside = false;
                 for (const auto& box : active_boxes) {
-                    if (box.contains(scaled_p)) { inside = true; break; }
+                    if (box.box.contains(scaled_p)) { 
+                        abcd.detected = (uint8_t)target_id;
+                        abcd.class_ID = box.class_id;
+                        abcd.distance = scan->points[i].range;
+                        abcd.bbox_x = box.box.x;
+                        abcd.bbox_y = box.box.y;
+                        abcd.bbox_w = box.box.width;
+                        abcd.bbox_h = box.box.height;
+                        //spi 쏘는 코드
+                        uint8_t* ptr = (uint8_t*)&abcd;
+                        uint8_t crc = 0;
+                        for (size_t i = 0; i < sizeof(UART_Packet_t) - 1; i++) {
+                            crc ^= ptr[i];
+                        }
+                        abcd.checksum = crc;
+
+                        // 커널 모듈의 dev_write 실행
+                        ssize_t sent = write(spi_dev_fd, &abcd, sizeof(UART_Packet_t));
+                        
+                        if (sent < 0) {
+                            printf("SPI write error\n");
+                            // 전송 실패 처리
+                        }
+                        inside = true; break; 
+                    }
                 }
                 circle(canvas, scaled_p, 3, inside ? Scalar(0, 255, 255) : ptColor, -1);
             }
+            i++;
         }
 
-        for (const auto& box : active_boxes) {
-            rectangle(canvas, box, Scalar(255, 0, 0), 2);
-            putText(canvas, "OBJ", Point(box.x, box.y - 10), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 0, 0), 2);
+        for (const auto& d : active_boxes) {
+            // --- [수정 2] rectangle 함수에 d.box 전달 ---
+            rectangle(canvas, d.box, Scalar(255, 0, 0), 2);
+            // --- [수정 3] d.box.x, d.box.y로 접근 ---
+            putText(canvas, "OBJ", Point(d.box.x, d.box.y - 10), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 0, 0), 2);
         }
     }
 
@@ -108,6 +140,12 @@ int main() {
 
     cout << "\n[System High-Speed Mode] Scan Frequency: 12Hz" << endl;
 
+    spi_dev_fd = open("/dev/stm32_spi", O_WRONLY); 
+    if (spi_dev_fd < 0) {
+        cerr << "Error: Cannot open SPI device node!" << endl;
+        return false;
+    }
+
     while (true) {
         auto curr_time = chrono::high_resolution_clock::now();
         chrono::duration<double> diff = curr_time - prev_time;
@@ -126,7 +164,7 @@ int main() {
                 auto j = json::parse(buf);
                 if (j.contains("detections")) {
                     for (auto& d : j["detections"]) {
-                        dets.push_back({d[0].get<int>(), Rect((int)d[2].get<float>(), (int)d[3].get<float>(), 
+                        dets.push_back({d[0].get<int>(),d[1].get<int>(), Rect((int)d[2].get<float>(), (int)d[3].get<float>(), 
                                                             (int)d[4].get<float>(), (int)d[5].get<float>())});
                     }
                 }
@@ -142,8 +180,8 @@ int main() {
                 float a = scan.points[i].angle;
                 pts3d.push_back(Point3f(dist * sin(a), 0, dist * cos(a)));
             }
-            renderFusion(canvas_f, pts3d, mtx_f, dist_f, rvec, tvec, dets, 0, Scalar(0, 255, 0), fps);
-            renderFusion(canvas_b, pts3d, mtx_b, dist_b, rvec, tvec, dets, 1, Scalar(0, 0, 255), fps);
+            renderFusion(canvas_f, pts3d, mtx_f, dist_f, rvec, tvec, dets, 0, Scalar(0, 255, 0), fps,&scan);
+            renderFusion(canvas_b, pts3d, mtx_b, dist_b, rvec, tvec, dets, 1, Scalar(0, 0, 255), fps,&scan);
         }
 
         imshow("FRONT (Cam 0)", canvas_f);
