@@ -48,12 +48,12 @@ void renderFusion(Mat& canvas, const vector<Point3f>& pts3d, const Mat& mtx, con
                 for (const auto& box : active_boxes) {
                     if (box.box.contains(scaled_p)) { 
                         abcd.detected = (uint8_t)target_id;
-                        abcd.class_ID = box.class_id;
+                        abcd.class_ID = (uint8_t)box.class_id;
                         abcd.distance = scan->points[i].range;
-                        abcd.bbox_x = box.box.x;
-                        abcd.bbox_y = box.box.y;
-                        abcd.bbox_w = box.box.width;
-                        abcd.bbox_h = box.box.height;
+                        abcd.bbox_x = (float)box.box.x;
+                        abcd.bbox_y = (float)box.box.y;
+                        abcd.bbox_w = (float)box.box.width;
+                        abcd.bbox_h = (float)box.box.height;
                         //spi 쏘는 코드
                         uint8_t* ptr = (uint8_t*)&abcd;
                         uint8_t crc = 0;
@@ -65,11 +65,19 @@ void renderFusion(Mat& canvas, const vector<Point3f>& pts3d, const Mat& mtx, con
                         // 커널 모듈의 dev_write 실행
                         ssize_t sent = write(spi_dev_fd, &abcd, sizeof(UART_Packet_t));
                         
-                        if (sent < 0) {
-                            printf("SPI write error\n");
-                            // 전송 실패 처리
+                        if (sent > 0) {
+                            // 터미널에 실시간으로 데이터 전송 현황 출력
+                            printf("[SPI Send] ID: %d | Dist: %.2f mm | Pos: (%d, %d)\n", 
+                                abcd.class_ID, abcd.distance, abcd.bbox_x, abcd.bbox_y);
+                        } else {
+                            // 에러 발생 시 출력
+                            perror("SPI Write Error");
                         }
-                        inside = true; break; 
+                        // if (sent < 0) {
+                        //     printf("SPI write error\n");
+                        //     // 전송 실패 처리
+                        // }
+                        // inside = true; break; 
                     }
                 }
                 circle(canvas, scaled_p, 3, inside ? Scalar(0, 255, 255) : ptColor, -1);
