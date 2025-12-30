@@ -55,6 +55,7 @@ ETH_DMADescTypeDef  DMATxDscrTab[ETH_TX_DESC_CNT]; /* Ethernet Tx DMA Descriptor
 ETH_HandleTypeDef heth;
 
 SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi2;
 SPI_HandleTypeDef hspi5;
 
 TIM_HandleTypeDef htim2;
@@ -78,6 +79,7 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI5_Init(void);
+static void MX_SPI2_Init(void);
 void StartDefaultTask(void const * argument);
 void StartRearTask(void const * argument);
 
@@ -87,11 +89,13 @@ void StartRearTask(void const * argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define RX_BUFFER_SIZE 10
-uint8_t rx_data;                // 1바이트 수신 임시 변수
-char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
-uint8_t rx_index = 0;
-volatile int data_ready = 0;
+//#define RX_BUFFER_SIZE 10
+//uint8_t rx_data;                // 1바이트 수신 임시 변수
+//char rx_buffer[RX_BUFFER_SIZE]; // 문자열 모으는 버퍼 ("320" 저장용)
+//uint8_t rx_index = 0;
+//volatile int data_ready = 0;
+SPI_Packet_t rx_packet_spi;
+volatile int spi_data_ready = 0;
 /* USER CODE END 0 */
 
 /**
@@ -129,11 +133,15 @@ int main(void)
   MX_TIM2_Init();
   MX_SPI1_Init();
   MX_SPI5_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   ADB_Init(); // LED 전체 켜기 상태로 시작
 
       // UART 수신 인터럽트 시작
-  HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  //HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+  HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+
+
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -158,7 +166,7 @@ int main(void)
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of RearTask */
-  osThreadDef(RearTask, StartRearTask, osPriorityNormal, 0, 128);
+  osThreadDef(RearTask, StartRearTask, osPriorityHigh, 0, 128);
   RearTaskHandle = osThreadCreate(osThread(RearTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -313,6 +321,43 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief SPI2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI2_Init(void)
+{
+
+  /* USER CODE BEGIN SPI2_Init 0 */
+
+  /* USER CODE END SPI2_Init 0 */
+
+  /* USER CODE BEGIN SPI2_Init 1 */
+
+  /* USER CODE END SPI2_Init 1 */
+  /* SPI2 parameter configuration*/
+  hspi2.Instance = SPI2;
+  hspi2.Init.Mode = SPI_MODE_SLAVE;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi2.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi2.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI2_Init 2 */
+
+  /* USER CODE END SPI2_Init 2 */
 
 }
 
@@ -585,35 +630,56 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//{
+//    if (huart->Instance == USART3) // 사용하는 UART 채널 확인
+//    {
+//    	HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
+//        // 1. 엔터키('\n' or '\r')가 들어오면 완료 신호 보냄
+//        if (rx_data == '\n' || rx_data == '\r')
+//        {
+//        	if(rx_index > 0){
+//        		rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
+//        		rx_index = 0;               // 인덱스 초기화
+//        		data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
+//        	}
+//        }
+//        else
+//        {
+//            if (rx_index < 10)
+//            {
+//                rx_buffer[rx_index++] = rx_data; // 버퍼에 담기
+//            }
+//        }
+//
+//        // 2. 다시 수신 대기 (필수!)
+//        HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+//    }
+//}
+//int _write(int file, char *ptr, int len) {
+//    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
+//    return len;
+//}
+static uint8_t xor_checksum(const uint8_t *p, size_t n) {
+    uint8_t x = 0;
+    for (size_t i = 0; i < n; i++) x ^= p[i];
+    return x;
+}
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (huart->Instance == USART3) // 사용하는 UART 채널 확인
+    if (hspi->Instance == SPI2)
     {
-    	HAL_UART_Transmit(&huart3, &rx_data, 1, 10);
-        // 1. 엔터키('\n' or '\r')가 들어오면 완료 신호 보냄
-        if (rx_data == '\n' || rx_data == '\r')
-        {
-        	if(rx_index > 0){
-        		rx_buffer[rx_index] = '\0'; // 문자열 끝 처리
-        		rx_index = 0;               // 인덱스 초기화
-        		data_ready = 1;             // ★ 태스크야, 일해라! (플래그 세움)
-        	}
-        }
-        else
-        {
-            if (rx_index < 10)
-            {
-                rx_buffer[rx_index++] = rx_data; // 버퍼에 담기
+        // 0xAA 헤더 확인 및 체크섬
+        if (rx_packet_spi.header == 0xAA) {
+            uint8_t sum = xor_checksum((uint8_t*)&rx_packet_spi, PACKET_SIZE - 1);
+            if (sum == rx_packet_spi.checksum) {
+                spi_data_ready = 1;
             }
         }
 
-        // 2. 다시 수신 대기 (필수!)
-        HAL_UART_Receive_IT(&huart3, &rx_data, 1);
+        // ★ 다음 패킷 수신 대기 (송신 버퍼 없이 수신만)
+        HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
     }
-}
-int _write(int file, char *ptr, int len) {
-    HAL_UART_Transmit(&huart3, (uint8_t *)ptr, len, 10);
-    return len;
 }
 /* USER CODE END 4 */
 
@@ -627,44 +693,31 @@ int _write(int file, char *ptr, int len) {
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
-	ADB_Init();
+  ADB_Init();
+  MX_SPI2_Init();
 
-	HAL_UART_Receive_IT(&huart3, &rx_data, 1);
-  /* Infinite loop */
+  // ★ 변경됨: 송신 버퍼 없이 '수신'만 시작
+  HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+
   for(;;)
   {
-	  if (data_ready == 1)
-	  {
-	      data_ready = 0; // 플래그 클리어
+      if (spi_data_ready == 1)
+      {
+          spi_data_ready = 0;
 
-	      // 문자열을 숫자로 변환
-	      int x_coordinate = atoi((char*)rx_buffer);
+          // 1. 데이터 파싱
+          int16_t target_x = (int16_t)rx_packet_spi.bbox_x;
+          float target_dist = rx_packet_spi.distance;
 
-	      printf("Target X: %d\r\n", x_coordinate);
-
-	      // ====================================================
-	      // 4. 핵심 로직 실행 (보여주신 함수 사용)
-	      // ====================================================
-	      // 이 함수가 알아서 계산하고, 마스킹하고, Flush까지 다 수행합니다.
-	      ADB_SetX(x_coordinate);
-
-	      //x좌표에 따른 이모티콘 출력
-	      if(x_coordinate < 100)
-	      {
-	    	  RearDisplay_SetDistance(20.0f);
-	      }
-	      else if(x_coordinate < 500)
-	      {
-	    	  RearDisplay_SetDistance(50.0f);
-	      }
-	      else
-	      {
-	    	  RearDisplay_SetDistance(100.0f);
-	      }
-	  }
-
-	  osDelay(10);
-
+          // 2. ADB & Rear 제어
+          if (rx_packet_spi.detected) {
+              ADB_SetX(target_x);
+          } else {
+              ADB_SetX(-1);
+          }
+          RearDisplay_SetDistance(target_dist);
+      }
+      osDelay(1);
   }
   /* USER CODE END 5 */
 }

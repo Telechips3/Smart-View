@@ -149,6 +149,8 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 #pragma pack(push, 1)
 
+extern SPI_HandleTypeDef hspi2;
+
 typedef struct {
     uint8_t  header;    // 0xAA (Start Byte)
     uint8_t  detected;  // Detect Flag (1 Byte)
