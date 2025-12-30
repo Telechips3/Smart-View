@@ -2,151 +2,129 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <algorithm>
+#include <string.h>
 #include "ydlidar_sdk.h"
 
 using namespace cv;
 using namespace std;
 
-// [ªÛºˆ º≥¡§]
-const int CAM_WIDTH = 320;
-const int CAM_HEIGHT = 320;
-const int MAP_SIZE = 600; 
+const int CAM_WIDTH = 640;
+const int CAM_HEIGHT = 480;
+const int MAP_SIZE = 600;
 
-// [∆©¥◊ ∆ƒ∂ÛπÃ≈Õ]
-float FOCAL_LENGTH = 800.0f; 
-float ANGLE_OFFSET_FRONT = 0.0f; // ¿¸πÊ ƒ´∏ﬁ∂Û ∞¢µµ πÃºº¡∂¡§
-float ANGLE_OFFSET_BACK = 0.0f;  // »ƒπÊ ƒ´∏ﬁ∂Û ∞¢µµ πÃºº¡∂¡§
-float V_OFFSET = 0.0f;           // ºˆ¡˜ ø¿«¡º¬
-const float Y_DIST = -0.03f;     // ƒ´∏ﬁ∂ÛøÕ ∂Û¿Ã¥Ÿ ∞£¿« ºˆ¡˜ ∞≈∏Æ (m)
-
-// ≈ıøµ «‘ºˆ: ∞≈∏ÆøÕ ∞¢µµ µ•¿Ã≈Õ∏¶ ƒ´∏ﬁ∂Û ¡¬«•∞Ë∑Œ ∫Ø»Ø«œø© ¡°¿ª ±◊∏≥¥œ¥Ÿ.
-void projectToCamera(Mat& frame, float dist, float angle_rad, Scalar color) {
-    // ƒ´∏ﬁ∂Û ¡¬«•∞Ë: Z(æ’πÊ«‚), X(¡¬øÏ), Y(ªÛ«œ)
-    float X = dist * sin(angle_rad); 
-    float Z = dist * cos(angle_rad);
-    float Y = Y_DIST;
-
-    // ƒ´∏ﬁ∂Û ¿¸πÊ(Z > 0)ø° ¿÷¥¬ ¡°µÈ∏∏ ≈ıøµ
-    if (Z > 0.1f) {
-        int u = (int)((FOCAL_LENGTH * X / Z) + (CAM_WIDTH / 2));
-        int v = (int)((FOCAL_LENGTH * Y / Z) + (CAM_HEIGHT / 2) + V_OFFSET);
-
-        // ¿ÃπÃ¡ˆ ∞Ê∞Ë ≥ªø° ¿÷¥¬ ¡°∏∏ ±◊∏Æ±‚
-        if (u >= 0 && u < CAM_WIDTH && v >= 0 && v < CAM_HEIGHT) {
-            circle(frame, Point(u, v), 2, color, -1);
-        }
-    }
-}
+// [ÌäúÎãù ÌååÎùºÎØ∏ÌÑ∞]
+float FOCAL_LENGTH = 600.0f; 
+const float Y_DIST = -0.05f; 
+const float FOV_DEG = 60.0f; // ÏöîÏ≤≠Ïóê Îî∞Îùº ÌÉêÏßÄ Î≤îÏúÑÎ•º 60ÎèÑ(Ï¢åÏö∞ 30ÎèÑ)Î°ú Î≥ÄÍ≤Ω
 
 int main() {
-    // 1. ƒ´∏ﬁ∂Û º≥¡§ (0: ¿¸πÊ, 2: »ƒπÊ - ø¨∞· ªÛ≈¬ø° µ˚∂Û π¯»£ »Æ¿Œ « ø‰)
-    VideoCapture cap_front(0, CAP_V4L2);
-    VideoCapture cap_back(2, CAP_V4L2); 
+    // 1. Ïπ¥Î©îÎùº ÏÑ§Ï†ï
+    VideoCapture capFront(0, CAP_V4L2);
+    VideoCapture capRear(2, CAP_V4L2);
 
-    if (!cap_front.isOpened() || !cap_back.isOpened()) {
-        printf("ƒ´∏ﬁ∂Û∏¶ ø≠ ºˆ æ¯Ω¿¥œ¥Ÿ! ¿Œµ¶Ω∫∏¶ »Æ¿Œ«œººø‰.\n");
+    if (!capFront.isOpened() || !capRear.isOpened()) {
+        printf("Ïπ¥Î©îÎùº Ïó∞Í≤∞ Ïã§Ìå®!\n");
         return -1;
     }
 
-    cap_front.set(CAP_PROP_FRAME_WIDTH, CAM_WIDTH);
-    cap_front.set(CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT);
-    cap_back.set(CAP_PROP_FRAME_WIDTH, CAM_WIDTH);
-    cap_back.set(CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT);
+    capFront.set(CAP_PROP_FOURCC, VideoWriter::fourcc('M', 'J', 'P', 'G'));
+    capRear.set(CAP_PROP_FOURCC, VideoWriter::fourcc('M', 'J', 'P', 'G'));
+    capFront.set(CAP_PROP_FRAME_WIDTH, CAM_WIDTH);
+    capFront.set(CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT);
+    capRear.set(CAP_PROP_FRAME_WIDTH, CAM_WIDTH);
+    capRear.set(CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT);
 
-    // 2. ∂Û¿Ã¥Ÿ º≥¡§
+    // 2. YDLidar ÏÑ§Ï†ï
     os_init();
     YDLidar *laser = lidarCreate();
     const char *port = "/dev/ttyUSB0";
     int baudrate = 230400;
     setlidaropt(laser, LidarPropSerialPort, port, strlen(port));
     setlidaropt(laser, LidarPropSerialBaudrate, &baudrate, sizeof(int));
-
-    if (!initialize(laser) || !turnOn(laser)) {
-        printf("∂Û¿Ã¥Ÿ∏¶ Ω√¿€«“ ºˆ æ¯Ω¿¥œ¥Ÿ.\n");
-        return -1;
-    }
+    
+    if (!initialize(laser) || !turnOn(laser)) return -1;
 
     LaserFan scan;
-    scan.points = (LaserPoint *)malloc(sizeof(LaserPoint) * 2000);
+    scan.points = (LaserPoint *)malloc(sizeof(LaserPoint) * 2048);
 
-    // 3. FPS ∞ËªÍøÎ ∫Øºˆ
-    double t_start = (double)getTickCount();
-    int frame_count = 0;
-    float fps = 0.0;
+    float fov_rad = FOV_DEG * M_PI / 180.0f;
 
     while (true) {
-        Mat frame_f, frame_b, lidar_map;
-        cap_front >> frame_f;
-        cap_back >> frame_b;
-        if (frame_f.empty() || frame_b.empty()) continue;
+        Mat frameF, frameR, lidar_map;
+        capFront >> frameF;
+        capRear >> frameR;
 
-        // FPS ∞ËªÍ (1√ ∏∂¥Ÿ ∞ªΩ≈)
-        frame_count++;
-        double t_now = (double)getTickCount();
-        double elapsed = (t_now - t_start) / getTickFrequency();
-        if (elapsed >= 1.0) {
-            fps = (float)(frame_count / elapsed);
-            t_start = t_now;
-            frame_count = 0;
-        }
+        if (frameF.empty() || frameR.empty()) continue;
 
-        // ∂Û¿Ã¥Ÿ ∏  √ ±‚»≠ π◊ ¡ﬂæ”¡° ±◊∏Æ±‚
+        // ÌÉëÎ∑∞ Ï¥àÍ∏∞Ìôî
         lidar_map = Mat::zeros(MAP_SIZE, MAP_SIZE, CV_8UC3);
-        circle(lidar_map, Point(MAP_SIZE/2, MAP_SIZE/2), 5, Scalar(0, 0, 255), -1);
+        int cx = MAP_SIZE / 2;
+        int cy = MAP_SIZE / 2;
+        circle(lidar_map, Point(cx, cy), 3, Scalar(255, 255, 255), -1);
 
         if (doProcessSimple(laser, &scan)) {
             for (int i = 0; i < scan.npoints; i++) {
                 float dist = scan.points[i].range;
+                float angle = scan.points[i].angle;
                 if (dist <= 0.1f) continue;
 
-                float raw_angle = scan.points[i].angle;
-
-                // [≈æ∫‰ ¡ˆµµ ¿€º∫]
-                int map_x = MAP_SIZE / 2 + (int)(dist * 50 * sin(raw_angle));
-                int map_y = MAP_SIZE / 2 - (int)(dist * 50 * cos(raw_angle));
-                if (map_x >= 0 && map_x < MAP_SIZE && map_y >= 0 && map_y < MAP_SIZE) {
-                    lidar_map.at<Vec3b>(map_y, map_x) = Vec3b(255, 255, 255);
+                // Í∏∞Î≥∏ ÌÉëÎ∑∞ Îç∞Ïù¥ÌÑ∞ (ÌöåÏÉâ)
+                int mx = cx + (int)(dist * 60 * sin(angle));
+                int my = cy - (int)(dist * 60 * cos(angle));
+                if (mx >= 0 && mx < MAP_SIZE && my >= 0 && my < MAP_SIZE) {
+                    lidar_map.at<Vec3b>(my, mx) = Vec3b(80, 80, 80); 
                 }
 
-                // [ƒ´∏ﬁ∂Û «ª¿¸ ≈ıøµ]
-                // ¿¸πÊ ƒ´∏ﬁ∂Û: ∂Û¿Ã¥Ÿ¿« 180µµ(M_PI) πÊ«‚¿ª ∏≈ƒ™
-                float angle_f = raw_angle + M_PI + (ANGLE_OFFSET_FRONT * M_PI / 180.0f);
-                projectToCamera(frame_f, dist, angle_f, Scalar(0, 255, 0));
+                // --- Ï†ÑÎ∞© Î≤îÏúÑ Ï≤òÎ¶¨ (-30 ~ 30ÎèÑ) ---
+                float rel_front = angle; 
+                while (rel_front > M_PI) rel_front -= 2.0f * M_PI;
+                while (rel_front < -M_PI) rel_front += 2.0f * M_PI;
 
-                // »ƒπÊ ƒ´∏ﬁ∂Û: ∂Û¿Ã¥Ÿ¿« 0µµ πÊ«‚¿ª ∏≈ƒ™
-                float angle_b = raw_angle + (ANGLE_OFFSET_BACK * M_PI / 180.0f);
-                projectToCamera(frame_b, dist, angle_b, Scalar(0, 255, 255));
+                if (abs(rel_front) <= fov_rad / 2.0f) {
+                    if (mx >= 0 && mx < MAP_SIZE && my >= 0 && my < MAP_SIZE) {
+                        circle(lidar_map, Point(mx, my), 2, Scalar(0, 255, 0), -1); // Ï†ÑÎ∞© Ï¥àÎ°ùÏÉâ
+                    }
+                    float X = dist * sin(rel_front);
+                    float Z = dist * cos(rel_front);
+                    int u = (int)((FOCAL_LENGTH * X / Z) + (CAM_WIDTH / 2));
+                    int v = (int)((FOCAL_LENGTH * Y_DIST / Z) + (CAM_HEIGHT / 2));
+                    if (u >= 0 && u < CAM_WIDTH && v >= 0 && v < CAM_HEIGHT && Z > 0.1f) {
+                        circle(frameF, Point(u, v), 3, Scalar(0, 255, 0), -1);
+                    }
+                }
+
+                // --- ÌõÑÎ∞© Î≤îÏúÑ Ï≤òÎ¶¨ (150 ~ 210ÎèÑ) ---
+                // Ï§ëÏã¨Ïù¥ 180ÎèÑ(M_PI)Ïù¥ÎØÄÎ°ú 180ÎèÑ Í∏∞Ï§Ä Ï¢åÏö∞ 30ÎèÑ ÌïÑÌÑ∞ÎßÅ
+                float rel_rear = angle - M_PI;
+                while (rel_rear > M_PI) rel_rear -= 2.0f * M_PI;
+                while (rel_rear < -M_PI) rel_rear += 2.0f * M_PI;
+
+                if (abs(rel_rear) <= fov_rad / 2.0f) {
+                    if (mx >= 0 && mx < MAP_SIZE && my >= 0 && my < MAP_SIZE) {
+                        circle(lidar_map, Point(mx, my), 2, Scalar(0, 0, 255), -1); // ÌõÑÎ∞© Îπ®Í∞ÑÏÉâ
+                    }
+                    float X = dist * sin(rel_rear);
+                    float Z = dist * cos(rel_rear);
+                    int u = (int)((FOCAL_LENGTH * X / Z) + (CAM_WIDTH / 2));
+                    int v = (int)((FOCAL_LENGTH * Y_DIST / Z) + (CAM_HEIGHT / 2));
+                    if (u >= 0 && u < CAM_WIDTH && v >= 0 && v < CAM_HEIGHT && Z > 0.1f) {
+                        circle(frameR, Point(u, v), 3, Scalar(0, 0, 255), -1);
+                    }
+                }
             }
         }
 
-        // [¡§∫∏ √‚∑¬] FPS ≈ÿΩ∫∆Æ ª˝º∫
-        char fps_text[20];
-        sprintf(fps_text, "FPS: %.1f", fps);
-        
-        // ¿¸πÊ øµªÛø° FPS π◊ ∂Û∫ß «•Ω√
-        putText(frame_f, "FRONT (180 deg)", Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 0), 2);
-        putText(frame_f, fps_text, Point(10, 60), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 255), 2);
+        // ÌÖçÏä§Ìä∏ ÏïàÎÇ¥ ÏóÖÎç∞Ïù¥Ìä∏
+        putText(frameF, "FRONT: -30 to 30 deg", Point(20, 30), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 0), 1);
+        putText(frameR, "REAR: 150 to 210 deg", Point(20, 30), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 0, 255), 1);
 
-        // »ƒπÊ øµªÛø° FPS π◊ ∂Û∫ß «•Ω√
-        putText(frame_b, "BACK (0 deg)", Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 255), 2);
-        putText(frame_b, fps_text, Point(10, 60), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 255), 2);
+        imshow("Front Video", frameF);
+        imshow("Rear Video", frameR);
+        imshow("LiDAR Top-view", lidar_map);
 
-        // ¿©µµøÏ «•Ω√
-        imshow("Front Fusion", frame_f);
-        imshow("Back Fusion", frame_b);
-        imshow("LiDAR Map", lidar_map);
-
-        // ≈∞ ¡¶æÓ
-        int key = waitKey(1);
-        if (key == 27) break; // ESC ¡æ∑·
-        else if (key == 'a') ANGLE_OFFSET_FRONT -= 1.0f;
-        else if (key == 'd') ANGLE_OFFSET_FRONT += 1.0f;
-        else if (key == 'j') ANGLE_OFFSET_BACK -= 1.0f;
-        else if (key == 'l') ANGLE_OFFSET_BACK += 1.0f;
+        if (waitKey(1) == 'q') break;
     }
 
-    // ¡æ∑· π◊ ¿⁄ø¯ «ÿ¡¶
     free(scan.points);
     turnOff(laser);
     lidarDestroy(&laser);
