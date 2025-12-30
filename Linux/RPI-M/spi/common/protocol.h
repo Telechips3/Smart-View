@@ -9,7 +9,7 @@
 
 typedef struct {
     uint8_t  header;      // 0xAA (시작 바이트)
-    uint8_t  detected;    // 탐지 여부
+    uint8_t  detected;    // 감지된 캠 번호 0-front 1-back
     uint8_t  class_ID;    // 객체 종류
     float    timestamp;   // 시간 (4 Bytes)
     float    distance;    // 거리 (4 Bytes)
