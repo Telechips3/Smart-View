@@ -99,7 +99,7 @@ void ADB_SetX(int16_t center_x) {
 
         // 상향등 영역(Row 0~5)만 마스킹 적용
         // Row 6~7은 하향등이므로 항상 켜짐
-        if (row < 6) {
+        if (row >= 2) {
             d_left0 &= mask_left[0];
             d_left1 &= mask_left[1];
             d_right0 &= mask_right[0];
