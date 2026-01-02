@@ -61,9 +61,39 @@ void shared_close(int* fd, const char* const shm_path[])
     }
 }
 
-void semaphore_mutex_init()
+void semaphore_mutex_init(int* fd, int* shm_size)
 {
+    LidarQueue *ptr = (LidarQueue *)mmap(NULL, shm_size[0], PROT_READ | PROT_WRITE, MAP_SHARED, fd[0], 0);
+    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
+    ptr->head = 0;
+    ptr->tail = 0;
+    munmap(ptr, shm_size[0]);
+    
+    //back
+    CameraQueue *ptr = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
+    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
+    ptr->head = 0;
+    ptr->tail = 0;
+    munmap(ptr, shm_size[1]);
+    
+    //front
+    CameraQueue *ptr = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
+    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
+    ptr->head = 0;
+    ptr->tail = 0;
+    munmap(ptr, shm_size[2]);
+}
 
+void inner_semaphore_mutex_init(pthread_mutex_t* mutex, sem_t* sem_empty, sem_t* sem_full)
+{
+    pthread_mutexattr_t mattr;
+    pthread_mutexattr_init(&mattr);
+    pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(mutex, &mattr);
+    pthread_mutexattr_destroy(&mattr);
+    
+    sem_init(sem_empty, 1, QUEUE_SIZE); 
+    sem_init(sem_full,  1, 0);  
 }
 
 int main() {
@@ -89,7 +119,7 @@ int main() {
     };
 
     shared_init(fd, shm_path, shm_size);
-    semaphore_mutex_init();
+    semaphore_mutex_init(fd, shm_size);
 
     // [Step 2] 각 프로세스 실행 (Fork & Exec)
     // 실제 실행 파일 경로를 적어주세요
