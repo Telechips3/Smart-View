@@ -6,15 +6,29 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <time.h>
+#include <fcntl.h>      
+#include <unistd.h>     
+#include <stdio.h>      
+#include <stdlib.h>     
+#include <string.h>
+#include <sys/mman.h>   
+#include <sys/stat.h>   
 
 // POSIX Shared Memory 이름
-#define SHM_NAME_LIDAR  "/smart_lidar_shm"
-#define SHM_NAME_CAMERA "/smart_camera_front_shm"
-#define SHM_NAME_CAMERA "/smart_camera_back_shm"
+#define SHM_NUM                 3
+#define SHM_NAME_LIDAR          "/lidar_shm"
+#define SHM_NAME_FRONT_CAMERA   "/camera_front_shm"
+#define SHM_NAME_BACK_CAMERA    "/camera_back_shm"
 
-#define QUEUE_SIZE 10        
-#define MAX_LIDAR_POINTS 1440 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
-#define MAX_BBOX_OBJS    20   // 한 프레임에 최대 감지할 객체 수
+#define LIDAR_PROC     "lidar"
+#define CAMERA_PROC    "camera"
+#define MAIN_PROC      "main_controller"
+
+#define QUEUE_SIZE          10
+#define MAX_LIDAR_POINTS    1440 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
+#define MAX_BBOX_OBJS       20   // 한 프레임에 최대 감지할 객체 수
+
+#define SIZE(X) (sizeof(X))
 
 typedef struct {
     float angle;  // 각도 (Radian or Degree)
@@ -23,8 +37,8 @@ typedef struct {
 } LidarPoint;
 
 typedef struct {
-    timespec timestamp;      // 시스템 시간
-    int count;               // 유효한 포인트 개수
+    float timestamp;      // 시스템 시간
+    int count;            // 유효한 포인트 개수
     LidarPoint points[MAX_LIDAR_POINTS];
 } LidarItem;
 
@@ -44,7 +58,7 @@ typedef struct {
 } BBox;
 
 typedef struct {
-    uint64_t timestamp;
+    float timestamp;
     int obj_count;           // 감지된 객체 수
     BBox objects[MAX_BBOX_OBJS];
 } CameraItem;
@@ -57,5 +71,6 @@ typedef struct {
     sem_t sem_empty;
     sem_t sem_full;
 } CameraQueue;
+
 
 #endif

@@ -1,8 +1,6 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include "../common.h"
 
 // 프로세스를 실행시키는 함수
 void spawn_process(const char* program_name, const char* path) {
@@ -32,6 +30,33 @@ void spawn_process(const char* program_name, const char* path) {
     printf("[Init System] Launched %s (PID: %d)\n", program_name, pid);
 }
 
+void shared_init(int* fd, const char* const shm_path[], const int* const shm_size)
+{
+    for(int i = 0; i < 3; i++)
+    {
+        fd[i] = shared_module_init(shm_path[i], shm_size[i]);
+        if(fd[i] == -1)
+        {
+            perror("shared_init fail");
+            exit(1); 
+        }
+    }
+}
+
+int shared_module_init(const char* const name, int shm_size)
+{
+    shm_unlink(name);
+
+    int fd = shm_open(name, O_CREAT | O_EXCL| O_RDWR, 0666);
+    if (ftruncate(fd, shm_size) == -1) { perror("shared_ftruncate fail"); exit(1); }
+    return fd;
+}
+
+void semaphore_mutex_init()
+{
+
+}
+
 int main() {
     printf("=== Smart-View System Initialization ===\n");
 
@@ -41,11 +66,27 @@ int main() {
     printf("[Init] Checking Network Interface...\n");
     printf("[Init] Initialization Complete.\n");
 
+    int fd[SHM_NUM];
+    int shm_size[SHM_NUM] = {
+        SIZE(LidarQueue),
+        SIZE(CameraQueue),
+        SIZE(CameraQueue)
+    };
+
+    const char* shm_path[SHM_NUM] = {
+        SHM_NAME_LIDAR, 
+        SHM_NAME_BACK_CAMERA,
+        SHM_NAME_FRONT_CAMERA
+    };
+
+    shared_init(fd, shm_path, shm_size);
+    semaphore_mutex_init();
+
     // [Step 2] 각 프로세스 실행 (Fork & Exec)
     // 실제 실행 파일 경로를 적어주세요
-    spawn_process("camera_proc", "./camera_app");
-    spawn_process("lidar_proc",  "./lidar_app");
-    spawn_process("main_ctrl",   "./main_controller");
+    spawn_process(LIDAR_PROC,  ".");
+    spawn_process(CAMERA_PROC, ".");
+    spawn_process(MAIN_PROC,   ".");
 
     // [Step 3] 모니터링 (부모 프로세스의 역할)
     // 자식들이 죽지 않고 잘 돌아가는지 감시합니다.
