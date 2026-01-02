@@ -172,7 +172,6 @@ void ActuatorTask(void const * argument);
 void DriveModeTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
-void Cruize_SetDrivingISR(void);
 static SystemState_t EvaluateMode(float dist, ObjectClass_t cls);
 static void BoardTimeoutUpdate(void);
 static void DecideActionFromBoard(void);
@@ -614,6 +613,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
@@ -628,12 +628,6 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : USER_Btn_Pin */
-  GPIO_InitStruct.Pin = USER_Btn_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
@@ -661,6 +655,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PE9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
   /*Configure GPIO pin : USB_PowerSwitchOn_Pin */
   GPIO_InitStruct.Pin = USB_PowerSwitchOn_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -687,12 +687,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PG9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
@@ -708,12 +702,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	BaseType_t hpw = pdFALSE;
 
-    if (GPIO_Pin == GPIO_PIN_7) // 다른 핀으로 맵핑 필요
+    if (GPIO_Pin == GPIO_PIN_7) // PD7 주행 모드 전환
     {
     	xSemaphoreGiveFromISR(startbtn_sem, &hpw);
     	portYIELD_FROM_ISR(hpw);
     }
-    if (GPIO_Pin == GPIO_PIN_9) // PG9 비상 버튼
+    if (GPIO_Pin == GPIO_PIN_9) // PE10 비상 버튼
     {
         if (!emergency_mode) emergency_mode = 1;
         emergency_mode = 1;
@@ -824,10 +818,6 @@ static void DecideActionFromBoard(void)
     else {
         currentAction = ACTION_MAINTAIN;
     }
-}
-
-void Cruize_SetDrivingISR(void)
-{
 }
 
 void Maintain_TargetSpeed(float target) {
@@ -1043,7 +1033,7 @@ void LogicTask(void const * argument)
 	    //g_board.vs.isEnabled = 0; // 정지시 크루즈 자동 종료
 
 	    // Door logic
-	    /*테스트용 주석처리
+	    /*테스트용 주석처리!!!!!!!!!!!!!!!!!
 	    if (now - lastDoorTick > pdMS_TO_TICKS(500)) { // 0.5초 이상 갱신 없으면
 	        currentClass = CLASS_NONE;
 	        currentDistance = INF_DIST;
