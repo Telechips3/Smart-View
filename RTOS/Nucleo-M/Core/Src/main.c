@@ -70,7 +70,7 @@ osThreadId DriveModeHandle;
 // 크루즈
 #define SAFE_DECEL  0.5f  		// 감속 제어 값
 #define SAFE_ACCEL   0.5f  		// 가속 제어 값
-#define PWM_MAX_VALUE (3000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
+#define PWM_MAX_VALUE (5000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
 #define PWM_STEP 1.0f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
 #define INF_DIST 99.0f
 #define DETECT_TIMEOUT_MS 5000
@@ -450,7 +450,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3000-1;
+  htim2.Init.Period = 5000-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
