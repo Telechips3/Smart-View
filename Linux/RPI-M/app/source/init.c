@@ -30,6 +30,15 @@ void spawn_process(const char* program_name, const char* path) {
     printf("[Init System] Launched %s (PID: %d)\n", program_name, pid);
 }
 
+int shared_module_init(const char* const name, int shm_size)
+{
+    shm_unlink(name);
+
+    int fd = shm_open(name, O_CREAT | O_EXCL| O_RDWR, 0666);
+    if (ftruncate(fd, shm_size) == -1) { perror("shared_ftruncate fail"); exit(1); }
+    return fd;
+}
+
 void shared_init(int* fd, const char* const shm_path[], const int* const shm_size)
 {
     for(int i = 0; i < SHM_NUM; i++)
@@ -43,14 +52,6 @@ void shared_init(int* fd, const char* const shm_path[], const int* const shm_siz
     }
 }
 
-int shared_module_init(const char* const name, int shm_size)
-{
-    shm_unlink(name);
-
-    int fd = shm_open(name, O_CREAT | O_EXCL| O_RDWR, 0666);
-    if (ftruncate(fd, shm_size) == -1) { perror("shared_ftruncate fail"); exit(1); }
-    return fd;
-}
 
 void shared_close(int* fd, const char* const shm_path[])
 {
@@ -59,29 +60,6 @@ void shared_close(int* fd, const char* const shm_path[])
         close(fd[i]);
         shm_unlink(shm_path[i]);
     }
-}
-
-void semaphore_mutex_init(int* fd, int* shm_size)
-{
-    LidarQueue *ptr = (LidarQueue *)mmap(NULL, shm_size[0], PROT_READ | PROT_WRITE, MAP_SHARED, fd[0], 0);
-    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
-    ptr->head = 0;
-    ptr->tail = 0;
-    munmap(ptr, shm_size[0]);
-    
-    //back
-    CameraQueue *ptr = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
-    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
-    ptr->head = 0;
-    ptr->tail = 0;
-    munmap(ptr, shm_size[1]);
-    
-    //front
-    CameraQueue *ptr = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
-    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
-    ptr->head = 0;
-    ptr->tail = 0;
-    munmap(ptr, shm_size[2]);
 }
 
 void inner_semaphore_mutex_init(pthread_mutex_t* mutex, sem_t* sem_empty, sem_t* sem_full)
@@ -95,6 +73,31 @@ void inner_semaphore_mutex_init(pthread_mutex_t* mutex, sem_t* sem_empty, sem_t*
     sem_init(sem_empty, 1, QUEUE_SIZE); 
     sem_init(sem_full,  1, 0);  
 }
+
+void semaphore_mutex_init(int* fd, int* shm_size)
+{
+    LidarQueue *ptr[SHM_NUM];
+    ptr[0] = (LidarQueue *)mmap(NULL, shm_size[0], PROT_READ | PROT_WRITE, MAP_SHARED, fd[0], 0);
+    inner_semaphore_mutex_init(&ptr[0]->mutex,&ptr[0]->sem_empty, &ptr[0]->sem_full);
+    ptr[0]->head = 0;
+    ptr[0]->tail = 0;
+    munmap(ptr[0], shm_size[0]);
+    
+    //back
+    ptr[1] = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
+    inner_semaphore_mutex_init(&ptr[1]->mutex,&ptr[1]->sem_empty, &ptr[1]->sem_full);
+    ptr[1]->head = 0;
+    ptr[1]->tail = 0;
+    munmap(ptr[1], shm_size[1]);
+    
+    //front
+    ptr[2] = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
+    inner_semaphore_mutex_init(&ptr[2]->mutex,&ptr[2]->sem_empty, &ptr[2]->sem_full);
+    ptr[2]->head = 0;
+    ptr[2]->tail = 0;
+    munmap(ptr[2], shm_size[2]);
+}
+
 
 int main() {
     printf("=== Smart-View System Initialization ===\n");
