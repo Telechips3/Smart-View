@@ -76,26 +76,27 @@ void inner_semaphore_mutex_init(pthread_mutex_t* mutex, sem_t* sem_empty, sem_t*
 
 void semaphore_mutex_init(int* fd, int* shm_size)
 {
-    LidarQueue *ptr[SHM_NUM];
-    ptr[0] = (LidarQueue *)mmap(NULL, shm_size[0], PROT_READ | PROT_WRITE, MAP_SHARED, fd[0], 0);
-    inner_semaphore_mutex_init(&ptr[0]->mutex,&ptr[0]->sem_empty, &ptr[0]->sem_full);
-    ptr[0]->head = 0;
-    ptr[0]->tail = 0;
-    munmap(ptr[0], shm_size[0]);
+    LidarQueue *ptr;
+    ptr = (LidarQueue *)mmap(NULL, shm_size[0], PROT_READ | PROT_WRITE, MAP_SHARED, fd[0], 0);
+    inner_semaphore_mutex_init(&ptr->mutex,&ptr->sem_empty, &ptr->sem_full);
+    ptr->head = 0;
+    ptr->tail = 0;
+    munmap(ptr, shm_size[0]);
     
     //back
-    ptr[1] = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
-    inner_semaphore_mutex_init(&ptr[1]->mutex,&ptr[1]->sem_empty, &ptr[1]->sem_full);
-    ptr[1]->head = 0;
-    ptr[1]->tail = 0;
-    munmap(ptr[1], shm_size[1]);
+    CameraQueue* cptr;
+    cptr = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
+    inner_semaphore_mutex_init(&cptr->mutex,&cptr->sem_empty, &cptr->sem_full);
+    cptr->head = 0;
+    cptr->tail = 0;
+    munmap(ptr, shm_size[1]);
     
     //front
-    ptr[2] = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
-    inner_semaphore_mutex_init(&ptr[2]->mutex,&ptr[2]->sem_empty, &ptr[2]->sem_full);
-    ptr[2]->head = 0;
-    ptr[2]->tail = 0;
-    munmap(ptr[2], shm_size[2]);
+    cptr = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
+    inner_semaphore_mutex_init(&cptr->mutex,&cptr->sem_empty, &cptr->sem_full);
+    cptr->head = 0;
+    cptr->tail = 0;
+    munmap(cptr, shm_size[2]);
 }
 
 
@@ -126,9 +127,9 @@ int main() {
 
     // [Step 2] 각 프로세스 실행 (Fork & Exec)
     // 실제 실행 파일 경로를 적어주세요
-    spawn_process(LIDAR_PROC,  ".");
-    spawn_process(CAMERA_PROC, ".");
-    spawn_process(MAIN_PROC,   ".");
+    spawn_process(LIDAR_PROC,  path_LIDAR_PROC);
+    spawn_process(CAMERA_PROC, path_CAMERA_PROC);
+    spawn_process(MAIN_PROC,   path_MAIN_PROC);
 
     // [Step 3] 모니터링 (부모 프로세스의 역할)
     // 자식들이 죽지 않고 잘 돌아가는지 감시합니다.
