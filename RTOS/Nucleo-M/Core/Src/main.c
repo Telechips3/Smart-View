@@ -68,10 +68,10 @@ osThreadId DriveModeHandle;
 // ----- Macro -----
 
 // 크루즈
-#define SAFE_DECEL  3.0f  		// 감속 제어 값
-#define SAFE_ACCEL   2.5f  		// 가속 제어 값
-#define PWM_MAX_VALUE 8999      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
-#define PWM_STEP 1.5f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
+#define SAFE_DECEL  0.5f  		// 감속 제어 값
+#define SAFE_ACCEL   0.5f  		// 가속 제어 값
+#define PWM_MAX_VALUE (3000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
+#define PWM_STEP 1.0f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
 #define INF_DIST 99.0f
 #define DETECT_TIMEOUT_MS 5000
 
@@ -141,7 +141,7 @@ uint8_t spi_tx_dummy[PACKET_SIZE] = {0};
 Shared_Buffer_t g_spi_buf;
 
 //크루즈
-int32_t current_duty = (int32_t)(80.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
+int32_t current_duty = (int32_t)(50.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
 volatile VehicleBoard g_board;
 volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속도 상태
 
@@ -226,15 +226,15 @@ int main(void)
 
   memset((void*)&g_board, 0, sizeof(g_board));
   g_board.vs.distFront = INF_DIST;
-  g_board.vs.distRear  = INF_DIST;
+  g_board.vs.distRear  = 1.0f;
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   g_board.vs.isEnabled = 1; // 테스트를 위해 기본 활성화
   g_board.vs.targetSpeed = 80.0f;
   Drive_st = DRIVING;
-//  g_board.vs.detectedRear = 1;
-//  g_board.vs.detectedFront = 0;
+  g_board.vs.detectedRear = 1;
+  g_board.vs.detectedFront = 0;
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);   // IN1
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
   /* USER CODE END 2 */
@@ -448,9 +448,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 9000-1;
+  htim2.Init.Period = 3000-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
@@ -840,7 +840,7 @@ void Apply_Acceleration(float accel_value)
 	 HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
 
     // 2. 가속도에 따른 Duty 증가
-    current_duty += (int32_t)(accel_value * PWM_STEP);
+    current_duty += (int32_t)(accel_value * (PWM_MAX_VALUE / 100.0f));
 
     // 3. Max Limit 제한
     if (current_duty > PWM_MAX_VALUE) current_duty = PWM_MAX_VALUE;
@@ -857,7 +857,7 @@ void Apply_Deceleration(float decel_value)
 
     // 2. 감속도에 따른 Duty 감소 (decel_value가 음수면 더하기, 양수면 빼기로 로직 통일 필요)
     // 여기서는 decel_value가 -3.0f로 들어온다고 가정하여 더해줍니다.
-    current_duty -= (int32_t)(decel_value * PWM_STEP);
+    current_duty -= (int32_t)(decel_value * (PWM_MAX_VALUE / 100.0f));
 
     // 3. Min Limit 제한 (정지 상태 이하로 떨어지지 않게)
     if (current_duty < 0) current_duty = 0;
