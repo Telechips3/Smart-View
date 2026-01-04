@@ -35,6 +35,7 @@ int shared_module_init(const char* const name, int shm_size)
     shm_unlink(name);
 
     int fd = shm_open(name, O_CREAT | O_EXCL| O_RDWR, 0666);
+    printf("%s is made\n", name);
     if (ftruncate(fd, shm_size) == -1) { perror("shared_ftruncate fail"); exit(1); }
     return fd;
 }
@@ -133,18 +134,18 @@ int main() {
 
     // [Step 3] 모니터링 (부모 프로세스의 역할)
     // 자식들이 죽지 않고 잘 돌아가는지 감시합니다.
-    // while (1) {
-    //     int status;
-    //     // wait(): 자식 중 하나라도 종료될 때까지 대기
-    //     pid_t child_pid = wait(&status);
+    while (1) {
+        int status;
+        // wait(): 자식 중 하나라도 종료될 때까지 대기
+        pid_t child_pid = wait(&status);
 
-    //     if (child_pid > 0) {
-    //         printf("[Alert] Child process %d died!\n", child_pid);
+        if (child_pid > 0) {
+            printf("[Alert] Child process %d died!\n", child_pid);
             
-    //         // 여기서 죽은 프로세스를 다시 살리는(Respawn) 로직을 넣을 수도 있습니다.
-    //         // 예: if (child_pid == camera_pid) spawn_process(..., "./camera_app");
-    //     }
-    // }
+            // 여기서 죽은 프로세스를 다시 살리는(Respawn) 로직을 넣을 수도 있습니다.
+            // 예: if (child_pid == camera_pid) spawn_process(..., "./camera_app");
+        }
+    }
 
     shared_close(fd, shm_path);
     return 0;
