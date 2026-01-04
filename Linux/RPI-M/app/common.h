@@ -39,7 +39,6 @@
 typedef struct {
     float angle;  // 각도 (Radian or Degree)
     float range;  // 거리 (Meter)
-    float intensity; // 반사 강도
 } LidarPoint;
 
 typedef struct {
@@ -57,10 +56,9 @@ typedef struct {
     sem_t sem_full;
 } LidarQueue;
 
-// --- [2] Camera 데이터 구조 (BBox) --- //여기 다시 짜야함.
+// --- [2] Camera 데이터 구조 (BBox)
 typedef struct {
-    int32_t track_id;
-    int32_t class_id; // (옵션) 객체 종류 (사람, 차 등)
+    int8_t class_id; // (옵션) 객체 종류 (사람, 차 등)
     float x, y, w, h;
 } BBox;
 
