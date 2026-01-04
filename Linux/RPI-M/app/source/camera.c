@@ -8,11 +8,8 @@
 #define UDP_PORT 5005
 #define BUFFER_SIZE 4096
 
-// 전역 공유 메모리 포인터
-static CameraQueue *shm_q = NULL;
-
 // 1. 공유 메모리 연결 (이미 생성된 메모리에 붙기만 함)
-int attach_shm(const char *shm_name) {
+int attach_shm(const char *shm_name, CameraQueue* shm_q) {
     // O_CREAT 없음 -> 이미 있는 것을 염
     int fd = shm_open(shm_name, O_RDWR, 0666);
     if (fd == -1) {
@@ -112,7 +109,14 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id) 
             if (cJSON_IsNumber(y))  item->objects[count].y = (float)y->valuedouble;
             if (cJSON_IsNumber(w))  item->objects[count].w = (float)w->valuedouble;
             if (cJSON_IsNumber(h))  item->objects[count].h = (float)h->valuedouble;
-            printf("[ID: %d, x: %f, y: %f, w: %f, h: %f\n]", id,x,y,h,w);
+            
+            printf("[ID: %d, x: %f, y: %f, w: %f, h: %f\n]", 
+                item->objects[count].class_id,
+                item->objects[count].x,
+                item->objects[count].y,
+                item->objects[count].h,
+                item->objects[count].w
+            );
             count++;
         }
     }
@@ -124,18 +128,18 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id) 
 
 int main(int argc, char *argv[]) {
     // 기본값: Front Camera
-    CameraQueue *front_q = attach_shm(SHM_NAME_FRONT_CAMERA);
-    CameraQueue *back_q  = attach_shm(SHM_NAME_BACK_CAMERA);
+    CameraQueue *front_q = NULL;
+    CameraQueue *back_q = NULL;
 
     int port = UDP_PORT;
 
     // 1. 공유 메모리 연결 (init 프로세스가 이미 만들어 뒀다고 가정)
-    if (attach_shm(front_q) < 0) {
+    if (attach_shm(SHM_NAME_FRONT_CAMERA, front_q) < 0) {
         fprintf(stderr, "[Camera] Front SHM not ready. Is 'init' process running?\n");
         return -1;
     }
 
-    if (attach_shm(back_q) < 0) {
+    if (attach_shm(SHM_NAME_BACK_CAMERA, back_q) < 0) {
         fprintf(stderr, "[Camera] back SHM not ready. Is 'init' process running?\n");
         return -1;
     }
@@ -173,7 +177,8 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    munmap(shm_q, sizeof(CameraQueue));
+    munmap(front_q, sizeof(CameraQueue));
+    munmap(back_q, sizeof(CameraQueue));
     close(sockfd);
     return 0;
 }
