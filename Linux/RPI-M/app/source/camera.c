@@ -8,9 +8,8 @@
 #define UDP_PORT 5005
 #define BUFFER_SIZE 4096
 
-// 1. 공유 메모리 연결 (이미 생성된 메모리에 붙기만 함)
-int attach_shm(const char *shm_name, CameraQueue* shm_q) {
-    // O_CREAT 없음 -> 이미 있는 것을 염
+// 1. 공유 메모리 연결
+int attach_shm(const char *shm_name, CameraQueue **shm_q) {
     int fd = shm_open(shm_name, O_RDWR, 0666);
     if (fd == -1) {
         perror("[Camera] shm_open failed");
@@ -25,7 +24,7 @@ int attach_shm(const char *shm_name, CameraQueue* shm_q) {
         return -1;
     }
 
-    shm_q = (CameraQueue *)ptr;
+    *shm_q = (CameraQueue *)ptr;
     return 0;
 }
 
@@ -57,90 +56,76 @@ int init_udp_server(int port) {
     return sockfd;
 }
 
+// 3. JSON 파싱 및 데이터 출력 로직
 int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id) {
     cJSON *root = cJSON_Parse(json_str);
-    if (root == NULL) {
-        const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL) {
-            fprintf(stderr, "[Camera] JSON Parse Error before: %s\n", error_ptr);
-        }
-        return -1;
-    }
+    if (root == NULL) return -1;
 
+    // Camera ID
     cJSON *cam = cJSON_GetObjectItem(root, "cam_id");
-    if (cJSON_IsNumber(cam))
-    {
-        *out_cam_id = cam->valueint;
-        printf("cam_id: %d ", *out_cam_id);
-    }
-    else { cJSON_Delete(root); return -1; }
+    if (cJSON_IsNumber(cam)) *out_cam_id = cam->valueint;
 
-    // 1. Timestamp (Python의 time.time()은 double임)
+    // Status (0: LOST, 1: OK)
+    cJSON *status = cJSON_GetObjectItem(root, "status");
+    int status_val = cJSON_IsNumber(status) ? status->valueint : 0;
+
+    // Timestamp (float)
     cJSON *ts = cJSON_GetObjectItem(root, "timestamp");
-    if (cJSON_IsNumber(ts)) {
-        item->timestamp = (float)ts->valuedouble;
-        printf("timestamp: %f ", item->timestamp);
-    } else {
-        // 에러 처리 시 cJSON_Delete 잊지 말 것
-        perror("[Camera] timestamp is not in upd socket");
-        cJSON_Delete(root);
-        return -1;
-    }
+    if (cJSON_IsNumber(ts)) item->timestamp = (float)ts->valuedouble;
 
-    // 2. Detections Array
+    // 터미널 출력 헤더
+    printf("\n[Cam: %d | Status: %s | TS: %f]", 
+           *out_cam_id, 
+           (status_val == 1) ? "\033[0;32mOK\033[0m" : "\033[0;31mLOST\033[0m", 
+           item->timestamp);
+
+    // Detections 파싱
     cJSON *detections = cJSON_GetObjectItem(root, "detections");
     int count = 0;
-
     if (cJSON_IsArray(detections)) {
         cJSON *obj = NULL;
         cJSON_ArrayForEach(obj, detections) {
             if (count >= MAX_BBOX_OBJS) break;
-            
-            // 각 필드를 개별 객체로 가져옴
             cJSON *id = cJSON_GetObjectItem(obj, "id");
             cJSON *x  = cJSON_GetObjectItem(obj, "x");
             cJSON *y  = cJSON_GetObjectItem(obj, "y");
             cJSON *w  = cJSON_GetObjectItem(obj, "w");
             cJSON *h  = cJSON_GetObjectItem(obj, "h");
 
-            // 데이터 타입 검증 및 할당
             if (cJSON_IsNumber(id)) item->objects[count].class_id = id->valueint;
             if (cJSON_IsNumber(x))  item->objects[count].x = (float)x->valuedouble;
             if (cJSON_IsNumber(y))  item->objects[count].y = (float)y->valuedouble;
             if (cJSON_IsNumber(w))  item->objects[count].w = (float)w->valuedouble;
             if (cJSON_IsNumber(h))  item->objects[count].h = (float)h->valuedouble;
             
-            printf("[ID: %d, x: %f, y: %f, w: %f, h: %f\n]", 
-                item->objects[count].class_id,
-                item->objects[count].x,
-                item->objects[count].y,
-                item->objects[count].h,
-                item->objects[count].w
-            );
+            // 좌표 전체 출력
+            printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f]", 
+                   item->objects[count].class_id, 
+                   item->objects[count].x, item->objects[count].y,
+                   item->objects[count].w, item->objects[count].h);
             count++;
         }
     }
     
     item->obj_count = count;
-    cJSON_Delete(root); // 메모리 해제 필수
+    cJSON_Delete(root);
     return 0;
 }
 
+// 4. Main 함수
 int main(int argc, char *argv[]) {
-    // 기본값: Front Camera
     CameraQueue *front_q = NULL;
     CameraQueue *back_q = NULL;
-
     int port = UDP_PORT;
 
-    // 1. 공유 메모리 연결 (init 프로세스가 이미 만들어 뒀다고 가정)
-    if (attach_shm(SHM_NAME_FRONT_CAMERA, front_q) < 0) {
-        fprintf(stderr, "[Camera] Front SHM not ready. Is 'init' process running?\n");
+    // 1. 공유 메모리 연결
+    if (attach_shm(SHM_NAME_FRONT_CAMERA, &front_q) < 0) {
+        fprintf(stderr, "[Camera] Front SHM not ready.\n");
         return -1;
     }
 
-    if (attach_shm(SHM_NAME_BACK_CAMERA, back_q) < 0) {
-        fprintf(stderr, "[Camera] back SHM not ready. Is 'init' process running?\n");
+    if (attach_shm(SHM_NAME_BACK_CAMERA, &back_q) < 0) {
+        fprintf(stderr, "[Camera] Back SHM not ready.\n");
         return -1;
     }
 
@@ -152,17 +137,18 @@ int main(int argc, char *argv[]) {
 
     // 3. 생산자 루프 (Receive -> Parse -> Produce)
     while (1) {
-        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, NULL, NULL);
+        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&cliaddr, &len);
         if (n > 0) {
             buffer[n] = '\0';
             CameraItem temp_item;
             int received_cam_id = -1;
 
             if (parse_json_to_item(buffer, &temp_item, &received_cam_id) == 0) {
-                // [핵심] cam_id에 따라 타겟 큐 결정
+                // cam_id에 따라 타겟 큐 결정 (0: Front, 1: Back)
                 CameraQueue *target_q = (received_cam_id == 0) ? front_q : back_q;
 
                 if (target_q) {
+                    // 소비자가 데이터를 가져갈 때까지 대기
                     sem_wait(&target_q->sem_empty);
                     pthread_mutex_lock(&target_q->mutex);
 
@@ -174,6 +160,7 @@ int main(int argc, char *argv[]) {
                     sem_post(&target_q->sem_full);
                 }
             }
+            fflush(stdout);
         }
     }
     

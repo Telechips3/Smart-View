@@ -85,19 +85,18 @@ void semaphore_mutex_init(int* fd, int* shm_size)
     munmap(ptr, shm_size[0]);
     
     //back
-    CameraQueue* cptr;
-    cptr = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
-    inner_semaphore_mutex_init(&cptr->mutex,&cptr->sem_empty, &cptr->sem_full);
-    cptr->head = 0;
-    cptr->tail = 0;
-    munmap(ptr, shm_size[1]);
+    CameraQueue* bptr = (CameraQueue *)mmap(NULL, shm_size[1], PROT_READ | PROT_WRITE, MAP_SHARED, fd[1], 0);
+    inner_semaphore_mutex_init(&bptr->mutex, &bptr->sem_empty, &bptr->sem_full);
+    bptr->head = 0;
+    bptr->tail = 0;
+    munmap(bptr, shm_size[1]);
     
     //front
-    cptr = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
-    inner_semaphore_mutex_init(&cptr->mutex,&cptr->sem_empty, &cptr->sem_full);
-    cptr->head = 0;
-    cptr->tail = 0;
-    munmap(cptr, shm_size[2]);
+    CameraQueue* fptr = (CameraQueue *)mmap(NULL, shm_size[2], PROT_READ | PROT_WRITE, MAP_SHARED, fd[2], 0);
+    inner_semaphore_mutex_init(&fptr->mutex, &fptr->sem_empty, &fptr->sem_full);
+    fptr->head = 0;
+    fptr->tail = 0;
+    munmap(fptr, shm_size[2]);
 }
 
 
