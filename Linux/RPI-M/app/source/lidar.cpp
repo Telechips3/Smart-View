@@ -6,6 +6,9 @@
 #include "common.h"
 #include "ydlidar_sdk.h"
 
+using namespace std;
+using namespace cv;
+
 // 카메라 파라미터(보정값) 
 Mat mtxF = (Mat_<double>(3,3) << 708.418, 0, 310.005, 0, 706.711, 254.354, 0, 0, 1);
 Mat mtxR = (Mat_<double>(3,3) << 705.052, 0, 316.681, 0, 703.592, 251.951, 0, 0, 1);
@@ -65,9 +68,6 @@ int main()
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
         
-        // 카메라 화면 좌표로 변환된 라이다 점들을 임시로 저장할 리스트
-        vector<LidarProj> ptsF, ptsR;
-
         // 라이다 센서로부터 최신 스캔 데이터(한 바퀴)를 가져옴
         if (doProcessSimple(laser, &scan)) {
             // --- [생산자 영역 시작] ---

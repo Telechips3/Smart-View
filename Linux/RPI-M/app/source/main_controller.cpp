@@ -6,7 +6,6 @@
 #include "ydlidar_sdk.h"
 #include "common.h"
 
-using json = nlohmann::json;
 using namespace std;
 using namespace cv;
 
@@ -16,20 +15,20 @@ Mat mtxR = (Mat_<double>(3, 3) << 705.052, 0, 316.681, 0, 703.592, 251.951, 0, 0
 float angF = -0.023f, yF = -0.150f, sF = 0.76f;
 float angR = -0.023f, yR = -0.150f, sR = 0.79f;
 
-void drawContour(Mat &img, const vector<LidarProj> &pts, Scalar color)
-{
-    if (pts.size() < 2)
-        return;
-    for (size_t i = 1; i < pts.size(); i++)
-    {
-        if (abs(pts[i].dist - pts[i - 1].dist) < 0.5f)
-        {
-            line(img, pts[i - 1].pt, pts[i].pt, color, 2, LINE_AA);
-        }
-    }
-}
+// void drawContour(Mat &img, const vector<LidarPoint> &pts, Scalar color)
+// {
+//     if (pts.size() < 2)
+//         return;
+//     for (size_t i = 1; i < pts.size(); i++)
+//     {
+//         if (abs(pts[i].dist - pts[i - 1].dist) < 0.5f)
+//         {
+//             line(img, pts[i - 1].pt, pts[i].pt, color, 2, LINE_AA);
+//         }
+//     }
+// }
 
-void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<LidarPoint> &currentPts, Mat &targetView )
+void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q, const vector<LidarPoint> &currentPts, Mat &targetView)
 {
     if (sem_trywait(&cur_q->sem_full) == 0)
     {
@@ -50,7 +49,7 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<Lida
             // Lidar 포인트와 BBox 매칭. 여기에 거리 코드가 만들어져야함.
             for (const auto &lp : currentPts)
             {
-                if (searchBox.contains(lp.pt))
+                if (searchBox.contains(cv::Point2f(lp.x, lp.y)))
                 {
                     if (lp.dist < minD)
                     {
@@ -74,7 +73,7 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<Lida
         pthread_mutex_unlock(&cur_q->mutex);
         sem_post(&cur_q->sem_empty);
     }
-    //마지막에 SPI 필요
+    // 마지막에 SPI 필요
 }
 
 int main()
@@ -97,7 +96,7 @@ int main()
 
         ptsF.clear();
         ptsR.clear();
-        
+
         // --- [Step 1] Lidar 데이터 가져오기 ---
         // sem_trywait을 사용하면 데이터가 없을 때 기다리지 않고 넘어갑니다.
         // 실시간성을 위해 최신 데이터를 기다리려면 sem_wait을 사용하세요.
@@ -127,8 +126,8 @@ int main()
         calibrateAndMatch(q_b, q_l, ptsR, viewR);
 
         // --- [Step 3] 최종 출력 ---
-        drawContour(viewF, ptsF, Scalar(0, 255, 0));
-        drawContour(viewR, ptsR, Scalar(0, 0, 255));
+        // drawContour(viewF, ptsF, Scalar(0, 255, 0));
+        // drawContour(viewR, ptsR, Scalar(0, 0, 255));
 
         Mat combined;
         hconcat(viewF, viewR, combined);
