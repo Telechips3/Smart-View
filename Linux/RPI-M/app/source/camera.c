@@ -98,18 +98,21 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id) 
             cJSON *y  = cJSON_GetObjectItem(obj, "y");
             cJSON *w  = cJSON_GetObjectItem(obj, "w");
             cJSON *h  = cJSON_GetObjectItem(obj, "h");
+            cJSON *d  = cJSON_GetObjectItem(obj, "d");
 
             if (cJSON_IsNumber(id)) item->objects[count].class_id = id->valueint;
             if (cJSON_IsNumber(x))  item->objects[count].x = (float)x->valuedouble;
             if (cJSON_IsNumber(y))  item->objects[count].y = (float)y->valuedouble;
             if (cJSON_IsNumber(w))  item->objects[count].w = (float)w->valuedouble;
             if (cJSON_IsNumber(h))  item->objects[count].h = (float)h->valuedouble;
-            
+            if (cJSON_IsNumber(d))  item->objects[count].distance = (float)d->valuedouble;
+
             // 좌표 전체 출력
             printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f]", 
                    item->objects[count].class_id, 
                    item->objects[count].x, item->objects[count].y,
-                   item->objects[count].w, item->objects[count].h);
+                   item->objects[count].w, item->objects[count].h,
+                   item->objects[count].distance);
             count++;
         }
     }

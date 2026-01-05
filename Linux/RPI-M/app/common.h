@@ -65,6 +65,7 @@ typedef struct {
 typedef struct {
     int8_t class_id; // (옵션) 객체 종류 (사람, 차 등)
     float x, y, w, h;
+    float distance;
 } BBox;
 
 typedef struct {
