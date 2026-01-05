@@ -2,7 +2,6 @@
 #include <vector>
 #include <string>
 #include <arpa/inet.h>
-#include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
 #include "ydlidar_sdk.h"
 #include "common.h"
@@ -66,7 +65,7 @@ int main()
         if (n > 0) {
             buffer[n] = '\0';
             try {
-                auto j = json::parse(buffer);
+                
                 for (auto& det : j["detections"]) {
                     int cam_id = det[0];
                     float rx = det[2].get<float>(), ry = det[3].get<float>();

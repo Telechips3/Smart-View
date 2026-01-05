@@ -152,9 +152,9 @@ int main(int argc, char *argv[]) {
                     sem_wait(&target_q->sem_empty);
                     pthread_mutex_lock(&target_q->mutex);
 
-                    int idx = target_q->head;
+                    int idx = target_q->tail;
                     memcpy(&target_q->buffer[idx], &temp_item, sizeof(CameraItem));
-                    target_q->head = (target_q->head + 1) % QUEUE_SIZE;
+                    target_q->tail = (target_q->tail + 1) % QUEUE_SIZE;
 
                     pthread_mutex_unlock(&target_q->mutex);
                     sem_post(&target_q->sem_full);
