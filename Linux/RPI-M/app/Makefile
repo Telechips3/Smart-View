@@ -5,10 +5,12 @@ CXX = g++
 # OpenCV 설정 추가 (pkg-config 이용)
 OPENCV_CFLAGS = $(shell pkg-config --cflags opencv4)
 OPENCV_LIBS = $(shell pkg-config --libs opencv4)
+YDLIDAR_ROOT = YDLidar-SDK
+YDLIDAR_INC  = -I$(YDLIDAR_ROOT)/src -I$(YDLIDAR_ROOT)
 
-COMMON_FLAGS = -Wall -I.
+COMMON_FLAGS = -Wall -I. $(YDLIDAR_INC)
 # 기존 라이브러리에 OpenCV 라이브러리 추가
-LIBS = -lrt -lpthread -lcjson $(OPENCV_LIBS)
+LIBS = -lrt -lpthread -lcjson $(OPENCV_LIBS) -L$(YDLIDAR_ROOT)/build -lydlidar_sdk
 
 CFLAGS = $(COMMON_FLAGS)
 # C++ 컴파일 시에만 OpenCV 헤더 경로 추가
