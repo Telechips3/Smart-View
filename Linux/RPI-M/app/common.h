@@ -29,7 +29,7 @@
 #define path_MAIN_PROC      "./build/main_controller"
 
 #define QUEUE_SIZE          50
-#define MAX_LIDAR_POINTS    1440 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
+#define MAX_LIDAR_POINTS    2048 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
 #define MAX_BBOX_OBJS       20   // 한 프레임에 최대 감지할 객체 수
 
 #define UDP_PORT 5005
@@ -37,8 +37,12 @@
 #define SIZE(X) (sizeof(X))
 
 typedef struct {
+    float dist;  // 거리 (Meter)
     float angle;  // 각도 (Radian or Degree)
-    float range;  // 거리 (Meter)
+    float u;
+    float v;
+    float x;
+    float y;
 } LidarPoint;
 
 typedef struct {
