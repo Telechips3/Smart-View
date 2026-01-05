@@ -29,7 +29,7 @@ void drawContour(Mat &img, const vector<LidarProj> &pts, Scalar color)
     }
 }
 
-void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<LidarProj> &currentPts, Mat &targetView )
+void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<LidarPoint> &currentPts, Mat &targetView )
 {
     if (sem_trywait(&cur_q->sem_full) == 0)
     {
@@ -47,7 +47,7 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<Lida
             float minD = 99.0f, targetA = 0.0f;
             bool found = false;
 
-            // Lidar 포인트와 BBox 매칭
+            // Lidar 포인트와 BBox 매칭. 여기에 거리 코드가 만들어져야함.
             for (const auto &lp : currentPts)
             {
                 if (searchBox.contains(lp.pt))
@@ -55,7 +55,7 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<Lida
                     if (lp.dist < minD)
                     {
                         minD = lp.dist;
-                        targetA = lp.ang;
+                        targetA = lp.angle;
                         found = true;
                     }
                 }
@@ -74,6 +74,7 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q,const vector<Lida
         pthread_mutex_unlock(&cur_q->mutex);
         sem_post(&cur_q->sem_empty);
     }
+    //마지막에 SPI 필요
 }
 
 int main()
@@ -86,13 +87,17 @@ int main()
     CameraQueue *q_f = (CameraQueue *)mmap(NULL, sizeof(CameraQueue), PROT_READ | PROT_WRITE, MAP_SHARED, fd_f, 0);
     CameraQueue *q_b = (CameraQueue *)mmap(NULL, sizeof(CameraQueue), PROT_READ | PROT_WRITE, MAP_SHARED, fd_b, 0);
 
+    vector<LidarPoint> ptsF, ptsR;
+    ptsF.reserve(MAX_LIDAR_POINTS);
+    ptsR.reserve(MAX_LIDAR_POINTS);
     while (true)
     {
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
 
-        vector<LidarPoint> ptsF, ptsR;
-
+        ptsF.clear();
+        ptsR.clear();
+        
         // --- [Step 1] Lidar 데이터 가져오기 ---
         // sem_trywait을 사용하면 데이터가 없을 때 기다리지 않고 넘어갑니다.
         // 실시간성을 위해 최신 데이터를 기다리려면 sem_wait을 사용하세요.
@@ -105,7 +110,7 @@ int main()
             {
                 // 각도에 따라 전방/후방 분류 (생산자 로직과 매칭)
                 // 생산자에서 이미 u, v를 계산해서 넘겨주므로 적절한 view에 할당
-                if (abs(item->points[i].ang) < 1.57f)
+                if (abs(item->points[i].angle) < 1.57f)
                     ptsF.push_back(item->points[i]); // 대략 전방 180도
                 else
                     ptsR.push_back(item->points[i]);
