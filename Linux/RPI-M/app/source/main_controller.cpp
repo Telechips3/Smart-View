@@ -5,7 +5,7 @@
 #include <arpa/inet.h>
 #include <opencv2/opencv.hpp>
 #include "ydlidar_sdk.h"
-#include "common.h"
+#include "../common.h"
 
 using namespace std;
 using namespace cv;
@@ -38,41 +38,69 @@ float getVehicleOffset(float angle_rad, bool isFront) {
     float L = isFront ? VEH_FRONT_LEN : VEH_REAR_LEN; // 전/후방 길이 선택
     float W = VEH_HALF_WIDTH;                         // 차량 폭
 
-    if (abs_angle == 0) return L; // 정면일 경우 직진 거리 반환
+    if (abs_angle < 1e-6) return L; // 정면일 경우 직진 거리 반환
 
     // 삼각함수를 이용하여 직사각형 차량의 경계면까지의 거리를 계산
     float boundary_dist = L / cos(abs_angle); // 앞/뒤 면까지의 거리
     float side_dist = W / sin(abs_angle);     // 좌/우 측면까지의 거리
     
     // 두 값 중 짧은 값이 실제 차량의 외곽선까지의 거리임
-    return min(boundary_dist, side_dist);
+    return abs(min(boundary_dist, side_dist));
 }
 
-// void drawContour(Mat &img, const vector<LidarPoint> &pts, Scalar color)
-// {
-//     if (pts.size() < 2)
-//         return;
-//     for (size_t i = 1; i < pts.size(); i++)
-//     {
-//         if (abs(pts[i].dist - pts[i - 1].dist) < 0.5f)
-//         {
-//             line(img, pts[i - 1].pt, pts[i].pt, color, 2, LINE_AA);
-//         }
-//     }
-// }
-
-void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q, const vector<LidarPoint> &currentPts, Mat &targetView, bool isfront)
+void drawContour(Mat &img, const vector<LidarPoint> &pts, Scalar color)
 {
-    if (sem_trywait(&cur_q->sem_full) == 0)
+    if (pts.size() < 2) return;
+
+    for (size_t i = 1; i < pts.size(); i++)
     {
-        pthread_mutex_lock(&cur_q->mutex);
-        CameraItem *c_item = &cur_q->buffer[cur_q->head];
-
-        Scalar color = Scalar(0, 0, 255);
-
-        for (int i = 0; i < c_item->obj_count; i++)
+        // 인접한 포인트 사이의 거리 차이가 작을 때만 선을 연결
+        if (std::abs(pts[i].dist - pts[i - 1].dist) < 0.5f)
         {
-            BBox &b = c_item->objects[i];
+            // .pt 대신 .u, .v를 사용하여 Point 객체를 생성합니다.
+            Point p1((int)pts[i - 1].u, (int)pts[i - 1].v);
+            Point p2((int)pts[i].u, (int)pts[i].v);
+            
+            // 이미지 범위 안인지 확인 후 그리기
+            if (p1.x >= 0 && p1.x < img.cols && p2.x >= 0 && p2.x < img.cols)
+            {
+                line(img, p1, p2, color, 2, LINE_AA);
+            }
+        }
+    }
+}
+
+void calibrateAndMatch(CameraQueue *cur_q, const vector<LidarPoint> &currentPts, Mat &targetView, bool isfront, int64_t timestamp)
+{
+    CameraItem target_item; // 복사본을 저장할 로컬 변수
+    bool found_item = false;
+    //printf("[Main] Searching Camera Queue (isfront=%d) for Timestamp: %lu\n", isfront ? 1 : 0, timestamp);
+    while(!found_item)
+    {
+        // 큐에서 타임스탬프가 일치하는 항목을 찾음
+        if (sem_wait(&cur_q->sem_full) == 0)
+        {
+            pthread_mutex_lock(&cur_q->mutex);
+            CameraItem *c_item = &cur_q->buffer[cur_q->head];
+            //printf("[Main] Checking Camera Item Timestamp: %lu\n", c_item->timestamp);
+
+            if ( abs(c_item->timestamp - timestamp) <= 5000000 )
+            {
+                // 타임스탬프가 일치하면 로컬 변수에 복사
+                memcpy(&target_item, c_item, sizeof(CameraItem));
+                found_item = true;
+            }
+            cur_q->head = (cur_q->head + 1) % QUEUE_SIZE;
+            pthread_mutex_unlock(&cur_q->mutex);
+            sem_post(&cur_q->sem_empty);
+        }
+    }
+    
+    if (found_item)
+    {
+        for (int i = 0; i < target_item.obj_count; i++)
+        {
+            BBox &b = target_item.objects[i];
             Rect box((int)b.x, (int)b.y, (int)b.w, (int)b.h);
             Rect searchBox(box.x - 10, box.y - 10, box.width + 20, box.height + 20);
 
@@ -82,9 +110,13 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q, const vector<Lid
             // Lidar 포인트와 BBox 매칭. 여기에 거리 코드가 만들어져야함.
             for (const auto &lp : currentPts)
             {
-                if (searchBox.contains(cv::Point2f(lp.x, lp.y)))
+                if (searchBox.contains(cv::Point2f(lp.u, lp.v)))
                 {
-                    float getOffset = getVehicleOffset(lp.angle, isfront); // 화면 상단이 전방
+                    float getOffset = lp.dist - getVehicleOffset(lp.angle, isfront); // 화면 상단이 전방
+                    // printf("Lidar Point Angle: %.2f rad, Dist: %.2f m, Vehicle Offset: %.2f m, Adjusted Dist: %.2f m\n",
+                    //        lp.angle, lp.dist,
+                    //        getVehicleOffset(lp.angle, isfront),
+                    //        getOffset);
                     if (getOffset < minD)
                     {
                         minD = getOffset;
@@ -94,18 +126,8 @@ void calibrateAndMatch(CameraQueue *cur_q, LidarQueue *lidar_q, const vector<Lid
                 }
             }
 
-            // 드로잉
-            rectangle(targetView, box, color, 2);
-            if (found)
-            {
-                char label[50];
-                sprintf(label, "%.2fm, %.1fdeg", minD, targetA * 180.0f / M_PI);
-                putText(targetView, label, Point(box.x, box.y - 10), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 255, 255), 1);
-            }
+            printf("Front is 0: %d, TimeStamp: %lu BBox %d: Distance = %.2f m\n", isfront ? 0: 1, timestamp, target_item.objects[i].class_id, minD);
         }
-        cur_q->head = (cur_q->head + 1) % QUEUE_SIZE;
-        pthread_mutex_unlock(&cur_q->mutex);
-        sem_post(&cur_q->sem_empty);
     }
     // 마지막에 SPI 필요
 }
@@ -125,14 +147,12 @@ int main()
     vector<LidarPoint> ptsF, ptsR;
     ptsF.reserve(MAX_LIDAR_POINTS);
     ptsR.reserve(MAX_LIDAR_POINTS);
+
+    int64_t timestamp = 0;
     while (!stop_flag)
     {
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
-
-        ptsF.clear();
-        ptsR.clear();
-
 
         // --- [Step 1] Lidar 데이터 가져오기 ---
         // sem_trywait을 사용하면 데이터가 없을 때 기다리지 않고 넘어갑니다.
@@ -141,6 +161,13 @@ int main()
         {
             pthread_mutex_lock(&q_l->mutex);
             LidarItem *item = &q_l->buffer[q_l->head];
+            
+            // 새 데이터가 왔을 때만 기존 리스트를 지우고 새로 채움
+            ptsF.clear(); 
+            ptsR.clear();
+
+            // [확인용 로그]
+            //printf("[Main] Lidar Data Received! Count: %d, First Dist: %.2f\n", item->count, item->points[0].dist);
 
             for (int i = 0; i < item->count; i++)
             {
@@ -152,6 +179,7 @@ int main()
                     ptsR.push_back(item->points[i]);
             }
 
+            timestamp = item->timestamp;
             q_l->head = (q_l->head + 1) % QUEUE_SIZE;
             pthread_mutex_unlock(&q_l->mutex);
             sem_post(&q_l->sem_empty);
@@ -159,19 +187,8 @@ int main()
 
         // --- [Step 2] 카메라 데이터(BBox) 처리 및 매칭 ---
         // 전방(Front)과 후방(Back) 각각 처리
-        calibrateAndMatch(q_f, q_l, ptsF, viewF, true);
-        calibrateAndMatch(q_b, q_l, ptsR, viewR, false);
-
-        // --- [Step 3] 최종 출력 ---
-        // drawContour(viewF, ptsF, Scalar(0, 255, 0));
-        // drawContour(viewR, ptsR, Scalar(0, 0, 255));
-
-        Mat combined;
-        hconcat(viewF, viewR, combined);
-        //imshow("Lidar-Camera Fusion Monitoring", combined);
-
-        if (waitKey(10) == 'q')
-            break;
+        calibrateAndMatch(q_f, ptsF, viewF, true, timestamp);
+        calibrateAndMatch(q_b, ptsR, viewR, false, timestamp);
     }
 
     munmap(q_l, sizeof(LidarQueue));

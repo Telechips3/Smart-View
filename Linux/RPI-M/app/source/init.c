@@ -150,6 +150,7 @@ int main()
     // [Step 2] 각 프로세스 실행 (Fork & Exec)
     // 실제 실행 파일 경로를 적어주세요
     child_pids[0] = spawn_process(LIDAR_PROC, path_LIDAR_PROC);
+    //usleep(2000000);
     child_pids[1] = spawn_process(CAMERA_PROC, path_CAMERA_PROC);
     child_pids[2] = spawn_process(MAIN_PROC, path_MAIN_PROC);
 
@@ -179,9 +180,11 @@ int main()
                     if (child_pids[i] > 0)
                     {
                         kill(child_pids[i], SIGINT); // 자식들에게 SIGINT 전송
+                        waitpid(child_pids[i], NULL, 0); // 각 자식의 PID를 지정해서 확실히 종료 확인
                         printf("Sent SIGINT to PID %d\n", child_pids[i]);
                     }
                 }
+                wait(NULL); // 모든 자식 프로세스가 종료될 때까지 대기
                 break; // 부모도 종료 루틴으로
             }
         }

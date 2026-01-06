@@ -29,7 +29,7 @@
 #define path_CAMERA_PROC    "./build/camera"
 #define path_MAIN_PROC      "./build/main_controller"
 
-#define QUEUE_SIZE          50
+#define QUEUE_SIZE          500
 #define MAX_LIDAR_POINTS    2048 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
 #define MAX_BBOX_OBJS       20   // 한 프레임에 최대 감지할 객체 수
 
@@ -47,7 +47,7 @@ typedef struct {
 } LidarPoint;
 
 typedef struct {
-    float timestamp;      // 시스템 시간
+    uint64_t timestamp;      // 시스템 시간
     int count;            // 유효한 포인트 개수
     LidarPoint points[MAX_LIDAR_POINTS];
 } LidarItem;
@@ -69,7 +69,7 @@ typedef struct {
 } BBox;
 
 typedef struct {
-    float timestamp;
+    uint64_t timestamp;
     int obj_count;           // 감지된 객체 수
     BBox objects[MAX_BBOX_OBJS];
 } CameraItem;

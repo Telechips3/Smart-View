@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <cmath>
 #include <opencv2/opencv.hpp>
-#include "common.h"
+#include "../common.h"
 #include "ydlidar_sdk.h"
 
 using namespace std;
@@ -23,6 +23,13 @@ volatile sig_atomic_t stop_flag = 0;
 void handle_sigint(int sig) {
     printf("\n[수신] SIGINT (%d) 발생! 프로그램을 정리하고 종료합니다.\n", sig);
     stop_flag = 1;
+}
+
+int64_t get_timestamp_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    // 초를 밀리초로 변환 + 나노초를 밀리초로 변환
+    return (int64_t)ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
 }
 
 int main()
@@ -70,23 +77,28 @@ int main()
     scan.points = (LaserPoint *)malloc(sizeof(LaserPoint) * MAX_LIDAR_POINTS);
 
     printf("[Lidar Producer] Ready to produce data...\n");
-
+    
     while(!stop_flag){
         // 전방(F)과 후방(R) 모니터링을 위한 빈 검은색 화면(640x480)을 매 프레임 생성
         Mat viewF = Mat::zeros(480, 640, CV_8UC3);
         Mat viewR = Mat::zeros(480, 640, CV_8UC3);
         
+        
         // 라이다 센서로부터 최신 스캔 데이터(한 바퀴)를 가져옴
         if (doProcessSimple(laser, &scan)) {
             // --- [생산자 영역 시작] ---
             // 빈 슬롯이 생길 때까지 대기
+            // int val;
+            // sem_getvalue(&q->sem_empty, &val);
+            // printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, q->tail);
+            
             sem_wait(&q->sem_empty);
             pthread_mutex_lock(&q->mutex);
 
             // 큐의 tail 위치에 데이터 쓰기
             LidarItem *item = &q->buffer[q->tail];
             item->count = 0;
-            item->timestamp = (float)time(NULL) * 1000;
+            item->timestamp = get_timestamp_ms() * 1000ll;
 
             for (int i = 0; i < scan.npoints; i++) {
                 if (item->count >= MAX_LIDAR_POINTS) break;
@@ -126,7 +138,10 @@ int main()
                 }
 
                 if (is_valid_proj) {
-                    item->points[item->count++] = lp;
+                    if (lp.u>=0 && lp.u<640 && lp.v>=0 && lp.v<480)
+                    {
+                        item->points[item->count++] = lp;
+                    }
                 }
             }
 

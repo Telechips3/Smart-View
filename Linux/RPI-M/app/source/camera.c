@@ -1,11 +1,10 @@
-#include "common.h"
 #include <cjson/cJSON.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include "../common.h"
 
-#define UDP_PORT 5005
 #define BUFFER_SIZE 4096
 
 volatile sig_atomic_t stop_flag = 0;
@@ -89,13 +88,13 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
     // Timestamp (float)
     cJSON *ts = cJSON_GetObjectItem(root, "timestamp");
     if (cJSON_IsNumber(ts))
-        item->timestamp = (float)ts->valuedouble;
+        item->timestamp = ts->valuedouble;
 
     // 터미널 출력 헤더
-    printf("\n[Cam: %d | Status: %s | TS: %f]",
-           *out_cam_id,
-           (status_val == 1) ? "\033[0;32mOK\033[0m" : "\033[0;31mLOST\033[0m",
-           item->timestamp);
+    // //printf("\n[Cam: %d | Status: %s | TS: %ld]",
+    //        *out_cam_id,
+    //        (status_val == 1) ? "\033[0;32mOK\033[0m" : "\033[0;31mLOST\033[0m",
+    //        item->timestamp);
 
     // Detections 파싱
     cJSON *detections = cJSON_GetObjectItem(root, "detections");
@@ -127,12 +126,12 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
             if (cJSON_IsNumber(d))
                 item->objects[count].distance = (float)d->valuedouble;
 
-            // 좌표 전체 출력
-            printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f, dist:%.1f] ",
-                   item->objects[count].class_id,
-                   item->objects[count].x, item->objects[count].y,
-                   item->objects[count].w, item->objects[count].h,
-                   item->objects[count].distance);
+            //좌표 전체 출력
+            // printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f, dist:%.1f]\n",
+            //        item->objects[count].class_id,
+            //        item->objects[count].x, item->objects[count].y,
+            //        item->objects[count].w, item->objects[count].h,
+            //        item->objects[count].distance);
             count++;
         }
     }
@@ -174,7 +173,7 @@ int main(int argc, char *argv[])
     while (!stop_flag)
     {
         ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&cliaddr, &len);
-        printf("Received packet from %s:%d\n", inet_ntoa(cliaddr.sin_addr), ntohs(cliaddr.sin_port));
+        //printf("Received packet from %s:%d\n", inet_ntoa(cliaddr.sin_addr), ntohs(cliaddr.sin_port));
         if (n > 0)
         {
             buffer[n] = '\0';
@@ -191,7 +190,8 @@ int main(int argc, char *argv[])
                     // 소비자가 데이터를 가져갈 때까지 대기
                     int val;
                     sem_getvalue(&target_q->sem_empty, &val);
-                    printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
+                    //printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
+
                     sem_wait(&target_q->sem_empty);
                     pthread_mutex_lock(&target_q->mutex);
                     int idx = target_q->tail;
