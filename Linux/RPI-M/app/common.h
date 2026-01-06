@@ -29,7 +29,7 @@
 #define path_CAMERA_PROC    "./build/camera"
 #define path_MAIN_PROC      "./build/main_controller"
 
-#define QUEUE_SIZE          500
+#define QUEUE_SIZE          2000
 #define MAX_LIDAR_POINTS    2048 // 360도 * 4 (0.25도 분해능 가정 시 여유분)
 #define MAX_BBOX_OBJS       20   // 한 프레임에 최대 감지할 객체 수
 
