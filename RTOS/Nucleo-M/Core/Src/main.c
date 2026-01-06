@@ -68,20 +68,20 @@ osThreadId DriveModeHandle;
 // ----- Macro -----
 
 // 크루즈
-#define SAFE_DECEL  0.5f  		// 감속 제어 값
-#define SAFE_ACCEL   0.5f  		// 가속 제어 값
+#define SAFE_DECEL  (0.5f)  		// 감속 제어 값
+#define SAFE_ACCEL   (0.5f)  		// 가속 제어 값
 #define PWM_MAX_VALUE (2000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
-#define PWM_STEP 0.01f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
-#define INF_DIST 99.0f
-#define DETECT_TIMEOUT_MS 5000
+#define PWM_STEP (0.01f)     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
+#define INF_DIST (99.0f)
+#define DETECT_TIMEOUT_MS (5000)
 
 // 문
 #define TH_PERSON_WARN_M        (3.0f)
 #define TH_VEHICLE_WARN_M       (8.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
 #define TH_VEHICLE_LOCK_M       (6.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
 #define SERVO_PULSE_CLOSE_US    (1000)   // 500은 너무 위험할 수 있음(서보마다 다름)
-#define SERVO_PULSE_OPEN_US     (2000)   // 필요시 1500/1800 등으로 캘리브레이션
-#define DOOR_OPEN_HOLD_MS       (1500)   // 버튼 눌렀을 때 문 열림 유지시간
+#define SERVO_PULSE_OPEN_US     (1600)   // 필요시 1500/1800 등으로 캘리브레이션
+#define DOOR_OPEN_HOLD_MS       (3000)   // 버튼 눌렀을 때 문 열림 유지시간
 #define EMERGENCY_HOLD_MS       (5000)
 
 // ----- 전역 구조체 정의 -----
@@ -232,7 +232,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   g_board.vs.isEnabled = 1; // 테스트를 위해 기본 활성화
-  g_board.vs.targetSpeed = 20.0f;
+  g_board.vs.targetSpeed = 30.0f;
   Drive_st = DRIVING;
   g_board.vs.detectedRear = 1;
   g_board.vs.detectedFront = 0;
