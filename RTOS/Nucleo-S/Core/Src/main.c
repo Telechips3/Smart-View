@@ -1,3 +1,4 @@
+
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
@@ -706,16 +707,28 @@ void StartDefaultTask(void const * argument)
           spi_data_ready = 0;
 
           // 1. 데이터 파싱
+          uint8_t obj_type = rx_packet_spi.class_ID;
+          uint8_t direction = rx_packet_spi.detected;
           int16_t target_x = (int16_t)rx_packet_spi.bbox_x;
           float target_dist = rx_packet_spi.distance;
 
-          // 2. ADB & Rear 제어
-          if (rx_packet_spi.detected) {
-              ADB_SetX(target_x);
-          } else {
-              ADB_SetX(-1);
+          //차량이면
+          if(obj_type == 2)
+          {
+        	  if(direction == 0)
+        	  {
+        		  ADB_SetX(target_x);
+        	  }
+        	  else if(direction == 1)
+        	  {
+        		  RearDisplay_SetDistance(target_dist);
+        	  }
+        	  else
+        	  {
+        		  ADB_SetX(-1);
+        		  RearDisplay_SetDistance(100.0f);
+        	  }
           }
-          RearDisplay_SetDistance(target_dist);
       }
       osDelay(1);
   }
