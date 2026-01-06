@@ -70,8 +70,8 @@ osThreadId DriveModeHandle;
 // 크루즈
 #define SAFE_DECEL  0.5f  		// 감속 제어 값
 #define SAFE_ACCEL   0.5f  		// 가속 제어 값
-#define PWM_MAX_VALUE (5000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
-#define PWM_STEP 1.0f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
+#define PWM_MAX_VALUE (2000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
+#define PWM_STEP 0.01f     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
 #define INF_DIST 99.0f
 #define DETECT_TIMEOUT_MS 5000
 
@@ -128,20 +128,21 @@ typedef enum {
 typedef enum {
     CLASS_NONE = 0,
     CLASS_PERSON,
+	CLASS_BIKE,
     CLASS_VEHICLE
 } ObjectClass_t;
 
 // ---- 전역 변수 및 구조체 선언 ----
 //통합
 SemaphoreHandle_t startbtn_sem;
-volatile DrivingState Drive_st = STOPPED;
+volatile DrivingState Drive_st = DRIVING;
 
 //통신
 uint8_t spi_tx_dummy[PACKET_SIZE] = {0};
 Shared_Buffer_t g_spi_buf;
 
 //크루즈
-int32_t current_duty = (int32_t)(50.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
+int32_t current_duty = (int32_t)(30.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
 volatile VehicleBoard g_board;
 volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속도 상태
 
@@ -149,7 +150,7 @@ volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속�
 SemaphoreHandle_t semaphoreH_Door;
 
 volatile uint8_t button_pressed = 0;
-volatile float currentDistance = 2.0f;
+volatile float currentDistance = 1.0f;
 volatile ObjectClass_t currentClass = CLASS_NONE;
 volatile uint8_t emergency_mode = 0;
 volatile SystemState_t currentMode = MODE_MONITORING;
@@ -226,12 +227,12 @@ int main(void)
 
   memset((void*)&g_board, 0, sizeof(g_board));
   g_board.vs.distFront = INF_DIST;
-  g_board.vs.distRear  = 1.0f;
+  g_board.vs.distRear = 1.0f;
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   g_board.vs.isEnabled = 1; // 테스트를 위해 기본 활성화
-  g_board.vs.targetSpeed = 80.0f;
+  g_board.vs.targetSpeed = 20.0f;
   Drive_st = DRIVING;
   g_board.vs.detectedRear = 1;
   g_board.vs.detectedFront = 0;
@@ -450,7 +451,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 5000-1;
+  htim2.Init.Period = 2000-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
@@ -618,9 +619,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
@@ -629,12 +627,8 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
@@ -687,8 +681,15 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PE0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 6, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -702,24 +703,25 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	BaseType_t hpw = pdFALSE;
 
-    if (GPIO_Pin == GPIO_PIN_7) // PD7 주행 모드 전환
+    if (GPIO_Pin == GPIO_PIN_7) // PD7 or 유저버튼 주행 모드 전환
     {
     	xSemaphoreGiveFromISR(startbtn_sem, &hpw);
     	portYIELD_FROM_ISR(hpw);
     }
-    if (GPIO_Pin == GPIO_PIN_9) // PE10 비상 버튼
+    if (GPIO_Pin == GPIO_PIN_9) // PE9 비상 버튼
     {
         if (!emergency_mode) emergency_mode = 1;
         emergency_mode = 1;
+        HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
     }
 }
+
 
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance != SPI1) return;
 
     // 디버그 LED
-    HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
 
     // 1) Header 체크
     if (g_spi_buf.data.header != 0xAA)
@@ -820,6 +822,12 @@ static void DecideActionFromBoard(void)
     }
 }
 
+void Motor_StartKick(void)
+{
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, PWM_MAX_VALUE * 0.9); // 70%
+  osDelay(500);
+}
+
 void Maintain_TargetSpeed(float target) {
 	// target 값을 기반으로 PWM 수치를 결정 (단순 맵핑)
 	    // 예: target이 0~100(%) 이라면 ARR 값에 비례하게 설정
@@ -870,7 +878,7 @@ static SystemState_t EvaluateMode(float dist, ObjectClass_t cls)
 {
 //	if (Drive_st) 							return MODE_DRIVING;	//무조건 driving이면 일단 MODE_DRIVING 확인 후 잠구기
 
-    if (cls == CLASS_VEHICLE)
+    if (cls == CLASS_BIKE)
     {
         if (dist <= TH_VEHICLE_LOCK_M)      return MODE_LOCK;
         else if (dist < TH_VEHICLE_WARN_M)  return MODE_WARNING;
@@ -960,9 +968,9 @@ void DoorActingTask(void const * argument)
       if (emergency_mode) {
           // 비상일 땐 "위험" 표시: 빨강 LED 켬
 //            HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_SET);
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_SET);
           osDelay(30);
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
           osDelay(100);
           continue;
       }
@@ -971,7 +979,7 @@ void DoorActingTask(void const * argument)
           // Monitoring: 조용히
 //            HAL_GPIO_WritePin(GPIOB, LD2_Pin, GPIO_PIN_RESET);
 //            HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
           osDelay(100);
       }
       else if (currentMode == MODE_WARNING) {
@@ -979,9 +987,9 @@ void DoorActingTask(void const * argument)
 //            HAL_GPIO_TogglePin(GPIOB, LD2_Pin);
 //            HAL_GPIO_WritePin(GPIOB, LD3_Pin, GPIO_PIN_RESET);
 
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_SET);
           osDelay(60);
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
 
           osDelay(100);
       }
@@ -991,9 +999,9 @@ void DoorActingTask(void const * argument)
 //            HAL_GPIO_WritePin(GPIOB, LD2_Pin, GPIO_PIN_RESET);
 
           // 부저는 취향인데, 너무 시끄러우면 끄고, 원하면 짧게 삑삑
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_SET);
           osDelay(30);
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOE, GPIO_PIN_0, GPIO_PIN_RESET);
           osDelay(100);
       }
   }
@@ -1015,7 +1023,8 @@ void LogicTask(void const * argument)
   for(;;)
   {
 	  	uint32_t now = xTaskGetTickCount();
-
+	  	uint8_t pd7 = (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7) == GPIO_PIN_RESET); // pullup+falling 가정
+	  	HAL_GPIO_WritePin(GPIOB, LD2_Pin, pd7 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 	  	HAL_GPIO_WritePin(GPIOB, LD1_Pin, Drive_st ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
 	  	BoardTimeoutUpdate();			//상황판은 계속 최신 상태로 유지 -> 반응성 UP
@@ -1120,7 +1129,12 @@ void DriveModeTask(void const * argument)
 	        if (now - last < pdMS_TO_TICKS(200)) continue;
 
 	        last = now;
-	        Drive_st ^= 1;
+	        if (Drive_st == STOPPED) {
+	            Drive_st = DRIVING;
+	            Motor_StartKick();
+	        } else {
+	            Drive_st = STOPPED;
+	        }
 	        osDelay(1);
 	    }
 
