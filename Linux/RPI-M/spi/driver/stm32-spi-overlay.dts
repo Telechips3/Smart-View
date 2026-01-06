@@ -8,6 +8,8 @@
         __overlay__ {
             // SPI0 컨트롤러를 활성화 상태로 변경
             status = "okay";
+            #address-cells = <1>;
+            #size-cells = <0>;
 
             // 기존의 일반적인 spidev는 비활성화 (충돌 방지)
             spidev@0 { status = "disabled"; }; 
@@ -17,6 +19,13 @@
                 compatible = "my,stm32-link"; // 어떤 이름의 드라이버 로드할지 결정
                 reg = <0>; // Chip Select CE0 (GPIO 8) 연결 확인
                 spi-max-frequency = <1000000>; // SPI 통신 최대 속도 (1MHz로 안전하게 시작)
+            };
+
+            spidev@1 { status = "disabled"; };
+            stm32_spi_cs1: stm32_spi@1 {
+                compatible = "my,stm32-link";
+                reg = <1>; 
+                spi-max-frequency = <1000000>;
             };
         };
     };
