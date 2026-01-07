@@ -15,6 +15,15 @@ void handle_sigint(int sig)
     stop_flag = 1;
 }
 
+int64_t get_timestamp_ms()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    // 초를 밀리초로 변환 + 나노초를 밀리초로 변환
+    return (int64_t)ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
+}
+
+
 // 1. 공유 메모리 연결
 int attach_shm(const char *shm_name, CameraQueue **shm_q)
 {
@@ -90,6 +99,11 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
     if (cJSON_IsNumber(ts))
         item->timestamp = ts->valuedouble;
 
+    uint64_t current_time = get_timestamp_ms() * 1000ll;
+    if((int64_t)current_time - (int64_t)(item->timestamp)<0)
+    {
+        printf(" Timestamp Error!\n");
+    }
     // 터미널 출력 헤더
     // //printf("\n[Cam: %d | Status: %s | TS: %ld]",
     //        *out_cam_id,
@@ -114,7 +128,14 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
             cJSON *d = cJSON_GetObjectItem(obj, "d");
 
             if (cJSON_IsNumber(id))
+            {
+                if(id->valueint < 0 || id->valueint >= 4)
+                {
+                    printf(" Invalid class ID: %d\n", id->valueint);
+                    continue; // 잘못된 클래스 ID는 무시
+                }
                 item->objects[count].class_id = id->valueint;
+            }
             if (cJSON_IsNumber(x))
                 item->objects[count].x = (float)x->valuedouble;
             if (cJSON_IsNumber(y))
@@ -126,12 +147,14 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
             if (cJSON_IsNumber(d))
                 item->objects[count].distance = (float)d->valuedouble;
 
+            
+            //전방 카메라
             //좌표 전체 출력
-            //  printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f, dist:%.1f]\n",
+            //  printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f\n",
             //         item->objects[count].class_id,
             //         item->objects[count].x, item->objects[count].y,
-            //         item->objects[count].w, item->objects[count].h,
-            //         item->objects[count].distance);
+            //         item->objects[count].w, item->objects[count].h
+            //         );
             count++;
         }
     }
@@ -190,7 +213,7 @@ int main(int argc, char *argv[])
                     // 소비자가 데이터를 가져갈 때까지 대기
                     int val;
                     sem_getvalue(&target_q->sem_empty, &val);
-                    //printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
+                    printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
 
                     sem_wait(&target_q->sem_empty);
                     pthread_mutex_lock(&target_q->mutex);

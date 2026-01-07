@@ -17,11 +17,13 @@ volatile sig_atomic_t stop_flag = 0; // 시그널 핸들러와 공유할 인자 
 
 // [차량 규격 설정] (단위: 미터)
 // 차량 폭 15cm -> 좌우 반폭 7.5cm (0.075m)
-const float VEH_HALF_WIDTH = 0.075f;
+const float VEH_HALF_WIDTH = 0.08f;
 
-// 차량 길이 24cm -> 라이다가 중앙에 있다면 앞뒤로 12cm (0.12m)
-const float VEH_FRONT_LEN = 0.12f;
-const float VEH_REAR_LEN = 0.12f;
+// 차량 길이 24cm -> 라이다가 중앙에 있다면 앞뒤로 15cm (0.15)
+const float VEH_FRONT_LEN = 0.15f;
+const float VEH_REAR_LEN = 0.15f;
+
+int fd;
 
 void handle_sigint(int sig)
 {
@@ -47,8 +49,8 @@ float getVehicleOffset(float angle_rad, bool isFront)
     float W = VEH_HALF_WIDTH;                         // 차량 폭
 
     // 코사인 값이 너무 작아지는 것 방지
-    float cos_v = std::max(std::cos(abs_angle), 0.1f);
-    float sin_v = std::max(std::sin(abs_angle), 0.1f);
+    float cos_v = std::max(std::cos(abs_angle), 0.000001f);
+    float sin_v = std::max(std::sin(abs_angle), 0.000001f);
 
     float dist_to_front = L / cos_v;
     float dist_to_side = W / sin_v;
@@ -81,11 +83,10 @@ void drawContour(Mat &img, const vector<LidarPoint> &pts, Scalar color)
     }
 }
 
-int fd;
 void calibrateAndMatch(CameraQueue *cur_q, const vector<LidarPoint> &currentPts, Mat &targetView, bool isfront, int64_t timestamp)
 {
     CameraItem target_item; // 복사본을 저장할 로컬 변수
-    const int64_t THRESHOLD = 150000;
+    const int64_t THRESHOLD = 100000;
     bool found_item = false;
     // printf("[Main] Searching Camera Queue (isfront=%d) for Timestamp: %lu\n", isfront ? 1 : 0, timestamp);
 
@@ -101,12 +102,12 @@ void calibrateAndMatch(CameraQueue *cur_q, const vector<LidarPoint> &currentPts,
         pthread_mutex_lock(&cur_q->mutex);
         CameraItem *c_item = &cur_q->buffer[cur_q->head];
         int64_t diff = (int64_t)timestamp - (int64_t)c_item->timestamp;
-        // printf("[Main] Comparing Camera Timestamp: %lu, Diff: %ld\n", c_item->timestamp, diff);
-
+        
         // 2. 타임스탬프 비교 로직
         if (std::abs(diff) <= THRESHOLD)
         {
             // [매칭 성공] 오차 범위 내에 있음
+            //printf("[Main]RPI-M: %lu, RPI-S: %lu, Diff: %ld\n",timestamp, c_item->timestamp, diff);
             memcpy(&target_item, c_item, sizeof(CameraItem));
             found_item = true;
 
@@ -183,27 +184,30 @@ void calibrateAndMatch(CameraQueue *cur_q, const vector<LidarPoint> &currentPts,
                 }
             }
 
-            // UART_Packet_t p = {0};
-            // p.header = 0xAA;
-            // p.distance = minD * 100.0f;
-            // p.class_ID = target_item.objects[i].class_id;
-            // p.detected = isfront ? 0 : 1;
-            // p.timestamp = timestamp;
-            // p.bbox_x = b.x;
-            // p.bbox_y = b.y;
-            // p.bbox_h = b.h;
-            // p.bbox_w = b.w;
+            minD = std::max(0.0f, minD);
+            minD += 0.15f; // 보정치;
 
-            // uint8_t crc = 0;
-            // uint8_t *ptr = (uint8_t *)&p;
-            // for (int i = 0; i < (int)PACKET_SIZE - 1; i++)
-            //     crc ^= ptr[i];
-            // p.checksum = crc;
-            // write(fd, &p, PACKET_SIZE);
+            UART_Packet_t p = {0};
+            p.header = 0xAA;
+            p.detected = isfront ? 0 : 1;
+            p.distance = minD * 100.0f;
+            p.class_ID = target_item.objects[i].class_id;
+            p.timestamp = timestamp;
+            p.bbox_x = b.x;
+            p.bbox_y = b.y;
+            p.bbox_h = b.h;
+            p.bbox_w = b.w;
 
+            uint8_t crc = 0;
+            uint8_t *ptr = (uint8_t *)&p;
+            for (int i = 0; i < (int)PACKET_SIZE - 1; i++)
+                crc ^= ptr[i];
+            p.checksum = crc;
+            write(fd, &p, PACKET_SIZE);
+
+            //printf("Front is 0: %d, TimeStamp: %lu BBox %d: Distance = %.2f m\n", isfront ? 0 : 1, timestamp, target_item.objects[i].class_id, minD);
             if (isfront)
             {
-                printf("Front is 0: %d, TimeStamp: %lu BBox %d: Distance = %.2f m\n", isfront ? 0 : 1, timestamp, target_item.objects[i].class_id, minD);
             }
         }
     }
@@ -226,12 +230,12 @@ int main()
     ptsF.reserve(MAX_LIDAR_POINTS);
     ptsR.reserve(MAX_LIDAR_POINTS);
 
-    // int fd = open("/dev/stm32_spi", O_WRONLY);
-    // if (fd < 0)
-    // {
-    //     perror("장치 열기 실패");
-    //     return -1;
-    // }
+    fd = open("/dev/stm32_spi", O_WRONLY);
+    if (fd < 0)
+    {
+        perror("장치 열기 실패");
+        return -1;
+    }
 
     int64_t timestamp = 0;
     while (!stop_flag)

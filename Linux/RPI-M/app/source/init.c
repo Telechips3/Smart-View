@@ -158,13 +158,6 @@ int main()
     // 자식들이 죽지 않고 잘 돌아가는지 감시합니다.
     while (1)
     {
-        int status;
-        pid_t died_pid = waitpid(-1, &status, WNOHANG);
-        if (died_pid > 0)
-        {
-            printf("[Alert] Child process %d died!\n", died_pid);
-        }
-
         // 2. 키 입력 확인 (표준 입력 감시)
         // 주의: 이 방식은 Enter를 눌러야 입력이 넘어옵니다.
         // 실시간 키 1개 감지를 원하면 termios 설정을 추가해야 합니다.
@@ -188,6 +181,7 @@ int main()
                 break; // 부모도 종료 루틴으로
             }
         }
+
 
         usleep(100000); // CPU 점유율 방지 (100ms)
     }
