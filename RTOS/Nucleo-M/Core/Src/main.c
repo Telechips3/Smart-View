@@ -76,9 +76,9 @@ osThreadId DriveModeHandle;
 #define DETECT_TIMEOUT_MS (5000)
 
 // 문
-#define TH_PERSON_WARN_M        (3.0f)
-#define TH_VEHICLE_WARN_M       (8.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
-#define TH_VEHICLE_LOCK_M       (6.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
+#define TH_PERSON_WARN_M        (30.0f)
+#define TH_VEHICLE_WARN_M       (100.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
+#define TH_VEHICLE_LOCK_M       (50.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
 #define SERVO_PULSE_CLOSE_US    (1000)   // 500은 너무 위험할 수 있음(서보마다 다름)
 #define SERVO_PULSE_OPEN_US     (1600)   // 필요시 1500/1800 등으로 캘리브레이션
 #define DOOR_OPEN_HOLD_MS       (3000)   // 버튼 눌렀을 때 문 열림 유지시간
@@ -126,10 +126,11 @@ typedef enum {
 } SystemState_t;
 
 typedef enum {
-    CLASS_NONE = 0,
-    CLASS_PERSON,
+    CLASS_PERSON = 0,
+    CLASS_BYCYCLE,
+	CLASS_VEHICLE,
 	CLASS_BIKE,
-    CLASS_VEHICLE
+	CLASS_NONE
 } ObjectClass_t;
 
 // ---- 전역 변수 및 구조체 선언 ----
@@ -142,7 +143,7 @@ uint8_t spi_tx_dummy[PACKET_SIZE] = {0};
 Shared_Buffer_t g_spi_buf;
 
 //크루즈
-int32_t current_duty = (int32_t)(30.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
+int32_t current_duty = (int32_t)(60.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
 volatile VehicleBoard g_board;
 volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속도 상태
 
@@ -150,8 +151,8 @@ volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속�
 SemaphoreHandle_t semaphoreH_Door;
 
 volatile uint8_t button_pressed = 0;
-volatile float currentDistance = 1.0f;
-volatile ObjectClass_t currentClass = CLASS_NONE;
+volatile float currentDistance = 30.0f;
+volatile ObjectClass_t currentClass = CLASS_PERSON;
 volatile uint8_t emergency_mode = 0;
 volatile SystemState_t currentMode = MODE_MONITORING;
 volatile uint32_t lastDoorTick = 0;
@@ -226,16 +227,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   memset((void*)&g_board, 0, sizeof(g_board));
-  g_board.vs.distFront = INF_DIST;
-  g_board.vs.distRear = 1.0f;
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-  g_board.vs.isEnabled = 1; // 테스트를 위해 기본 활성화
-  g_board.vs.targetSpeed = 30.0f;
-  Drive_st = DRIVING;
-  g_board.vs.detectedRear = 1;
   g_board.vs.detectedFront = 0;
+  g_board.vs.isEnabled = 1;
+  g_board.vs.detectedRear = 0;
+  g_board.vs.targetSpeed = 60.0f;
+  g_board.vs.distFront = INF_DIST;
+
+  g_board.vs.distRear = INF_DIST;
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_0, GPIO_PIN_SET);   // IN1
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_1, GPIO_PIN_RESET); // IN2
   /* USER CODE END 2 */
@@ -712,7 +713,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
         if (!emergency_mode) emergency_mode = 1;
         emergency_mode = 1;
-        HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
     }
 }
 
@@ -722,7 +722,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
     if (hspi->Instance != SPI1) return;
 
     // 디버그 LED
-
+    HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
     // 1) Header 체크
     if (g_spi_buf.data.header != 0xAA)
         goto restart;
@@ -736,7 +736,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
         goto restart;
 
     // 3) Detected 아니면 무시(너 정책)
-    if (g_spi_buf.data.detected == 0)
+    if (g_spi_buf.data.detected > 1)		//detected 0이 앞 1이 뒤
         goto restart;
 
     // 4) front/rear 판별 기준 (지금은 bbox_x로)
@@ -748,7 +748,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
     uint8_t cid = g_spi_buf.data.class_ID;
 
     if (cid == CLASS_VEHICLE){			//기존 코드 -> 가장 바깥쪽 if / else(cid==classvehicle 다 지워버리면 됨)
-    if (g_spi_buf.data.bbox_x > 0) {
+    if (g_spi_buf.data.detected == 0) {
         g_board.vs.detectedFront = 1;
         g_board.vs.distFront = g_spi_buf.data.distance;
         g_board.lastFrontTick = now;
@@ -759,7 +759,7 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
     }
     }
     else{
-    	if(g_spi_buf.data.bbox_x < 0){
+    	if(g_spi_buf.data.detected == 1 ){
     		currentClass =  (ObjectClass_t)cid;
     		currentDistance = g_spi_buf.data.distance;
     		lastDoorTick = now;
@@ -798,7 +798,7 @@ static void DecideActionFromBoard(void)
 {
 
 	// 안전거리 계산
-    float safeDistThreshold = (g_board.vs.targetSpeed * 0.2f) + 2.0f;
+    float safeDistThreshold = ((g_board.vs.targetSpeed * 0.2f) + 2.0f);
 
 
     // 상황판 스냅샷을 복사해서 쓰면 더 안전
@@ -878,7 +878,7 @@ static SystemState_t EvaluateMode(float dist, ObjectClass_t cls)
 {
 //	if (Drive_st) 							return MODE_DRIVING;	//무조건 driving이면 일단 MODE_DRIVING 확인 후 잠구기
 
-    if (cls == CLASS_BIKE)
+    if (cls == CLASS_BIKE || cls == CLASS_BYCYCLE || cls == CLASS_VEHICLE)
     {
         if (dist <= TH_VEHICLE_LOCK_M)      return MODE_LOCK;
         else if (dist < TH_VEHICLE_WARN_M)  return MODE_WARNING;
@@ -946,7 +946,6 @@ void StartDefaultTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-
     osDelay(1);
   }
   /* USER CODE END 5 */
@@ -1025,7 +1024,7 @@ void LogicTask(void const * argument)
 	  	uint32_t now = xTaskGetTickCount();
 	  	uint8_t pd7 = (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7) == GPIO_PIN_RESET); // pullup+falling 가정
 	  	HAL_GPIO_WritePin(GPIOB, LD2_Pin, pd7 ? GPIO_PIN_SET : GPIO_PIN_RESET);
-	  	HAL_GPIO_WritePin(GPIOB, LD1_Pin, Drive_st ? GPIO_PIN_SET : GPIO_PIN_RESET);
+	  	//HAL_GPIO_WritePin(GPIOB, LD1_Pin, Drive_st ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
 	  	BoardTimeoutUpdate();			//상황판은 계속 최신 상태로 유지 -> 반응성 UP
 	    if(Drive_st == DRIVING){
@@ -1042,11 +1041,11 @@ void LogicTask(void const * argument)
 	    //g_board.vs.isEnabled = 0; // 정지시 크루즈 자동 종료
 
 	    // Door logic
-	    /*테스트용 주석처리!!!!!!!!!!!!!!!!!
-	    if (now - lastDoorTick > pdMS_TO_TICKS(500)) { // 0.5초 이상 갱신 없으면
+	    // test할 때 if 죽이기
+	    if (now - lastDoorTick > pdMS_TO_TICKS(1000)) { // 1초 이상 갱신 없으면
 	        currentClass = CLASS_NONE;
 	        currentDistance = INF_DIST;
-	    }*/
+	    }
 	    xSemaphoreGive(semaphoreH_Door);
 	    currentMode = EvaluateMode(currentDistance, currentClass);
 	    //Actuator에서 drive중이면 자동으로 잠구자
