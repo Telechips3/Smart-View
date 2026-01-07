@@ -3,8 +3,10 @@ CC = gcc
 CXX = g++
 
 # OpenCV 설정 추가 (pkg-config 이용)
-OPENCV_CFLAGS = $(shell pkg-config --cflags opencv4)
-OPENCV_LIBS = $(shell pkg-config --libs opencv4)
+PCL_MODULES = pcl_common pcl_filters pcl_segmentation
+
+OPENCV_CFLAGS = $(shell pkg-config --cflags opencv4 $(PCL_MODULES))
+OPENCV_LIBS = $(shell pkg-config --libs opencv4 $(PCL_MODULES))
 YDLIDAR_ROOT = YDLidar-SDK
 YDLIDAR_INC  = -I$(YDLIDAR_ROOT)/src -I$(YDLIDAR_ROOT)
 
@@ -14,7 +16,8 @@ LIBS = -lrt -lpthread -lcjson $(OPENCV_LIBS) -L$(YDLIDAR_ROOT)/build -lydlidar_s
 
 CFLAGS = $(COMMON_FLAGS)
 # C++ 컴파일 시에만 OpenCV 헤더 경로 추가
-CXXFLAGS = $(COMMON_FLAGS) -std=c++11 $(OPENCV_CFLAGS)
+CXXFLAGS = $(COMMON_FLAGS) -std=c++17 $(OPENCV_CFLAGS)
+CXXFLAGS += -I/usr/include/eigen3
 
 # 2. 경로 및 공통 파일 설정
 SRC_DIR = source
