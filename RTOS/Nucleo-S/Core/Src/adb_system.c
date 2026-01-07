@@ -45,7 +45,7 @@ void ADB_SetX(int16_t center_x) {
             if (col_idx >= 16) col_idx = 15;
 
             // 그림자 범위: ±1칸 (총 3칸 끔)
-            int range = 1;
+            int range = 2;
 
             for (int i = -range; i <= range; i++) {
                 int target = col_idx + i;
