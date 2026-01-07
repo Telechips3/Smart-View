@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -72,9 +73,9 @@ osThreadId DriveModeHandle;
 #define SAFE_ACCEL   (0.5f)  		// 가속 제어 값
 #define PWM_MAX_VALUE (2000-1)      // 큐브MX에서 설정한 Counter Period (ARR) 값에 맞춰 수정하세요
 #define PWM_STEP (0.01f)     // 가속도 당 PWM 변화 가중치 (테스트 후 조정 필요)
-#define INF_DIST (99.0f)
+#define INF_DIST (999.0f)
 #define DETECT_TIMEOUT_MS (5000)
-
+#define DIST_SCAILE (5)
 // 문
 #define TH_PERSON_WARN_M        (30.0f)
 #define TH_VEHICLE_WARN_M       (100.0f)   // 그림 기준: 8m 이하면 Warning(이륜차)
@@ -83,7 +84,7 @@ osThreadId DriveModeHandle;
 #define SERVO_PULSE_OPEN_US     (1600)   // 필요시 1500/1800 등으로 캘리브레이션
 #define DOOR_OPEN_HOLD_MS       (3000)   // 버튼 눌렀을 때 문 열림 유지시간
 #define EMERGENCY_HOLD_MS       (5000)
-
+#define DOOR_TIMEOUT 			(500)
 // ----- 전역 구조체 정의 -----
 
 // 크루즈
@@ -143,19 +144,20 @@ uint8_t spi_tx_dummy[PACKET_SIZE] = {0};
 Shared_Buffer_t g_spi_buf;
 
 //크루즈
-int32_t current_duty = (int32_t)(60.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
+int32_t current_duty = (int32_t)(50.0f * (PWM_MAX_VALUE / 100.0f));      									// 현재 적용된 PWM Duty 값
 volatile VehicleBoard g_board;
 volatile ActionState currentAction = ACTION_MAINTAIN;			//현재 차량의 속도 상태
 
 //문
 SemaphoreHandle_t semaphoreH_Door;
-
 volatile uint8_t button_pressed = 0;
-volatile float currentDistance = 30.0f;
-volatile ObjectClass_t currentClass = CLASS_PERSON;
+volatile float currentDistance = INF_DIST;
+volatile float preDistance = INF_DIST;
+volatile ObjectClass_t currentClass = CLASS_NONE;
 volatile uint8_t emergency_mode = 0;
 volatile SystemState_t currentMode = MODE_MONITORING;
 volatile uint32_t lastDoorTick = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -182,11 +184,40 @@ void Apply_Acceleration(float accel_value);
 void Apply_Deceleration(float decel_value);
 void Servo_Door(uint32_t* arg_open_until, uint8_t* arg_last_btn);
 void DoorForceOpen(void);
+void Motor_StartKick(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#include <stdarg.h>
 
+void Uart3_Send_Byte(char ch){
+	//	TDR이 비었는 경우에 쓰기 가능 (TXE == 1 대기)
+	if(ch=='\n'){
+		while((USART3->SR>>7 & 0x1)==0);
+		USART3->DR = '\r';	// TDR <- c
+	}
+	while((USART3->SR>>7 & 0x1)==0);
+	USART3->DR = ch;		// TDR <- c
+}
+
+void Uart3_Send_String(char* str){
+	while(*str){
+		Uart3_Send_Byte(*str++);
+	}
+}
+
+void Uart3_Printf(char *fmt,...)
+{
+	va_list ap;
+	char string[64];
+
+	va_start(ap,fmt);
+	vsprintf(string,fmt,ap);
+	va_end(ap);
+	Uart3_Send_String(string);
+}
 /* USER CODE END 0 */
 
 /**
@@ -233,7 +264,7 @@ int main(void)
   g_board.vs.detectedFront = 0;
   g_board.vs.isEnabled = 1;
   g_board.vs.detectedRear = 0;
-  g_board.vs.targetSpeed = 60.0f;
+  g_board.vs.targetSpeed = 70.0f;
   g_board.vs.distFront = INF_DIST;
 
   g_board.vs.distRear = INF_DIST;
@@ -746,7 +777,6 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
     // ISR 크리티컬 (FreeRTOS)
     UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
     uint8_t cid = g_spi_buf.data.class_ID;
-
     if (cid == CLASS_VEHICLE){			//기존 코드 -> 가장 바깥쪽 if / else(cid==classvehicle 다 지워버리면 됨)
     if (g_spi_buf.data.detected == 0) {
         g_board.vs.detectedFront = 1;
@@ -798,7 +828,7 @@ static void DecideActionFromBoard(void)
 {
 
 	// 안전거리 계산
-    float safeDistThreshold = ((g_board.vs.targetSpeed * 0.2f) + 2.0f);
+    float safeDistThreshold = ((g_board.vs.targetSpeed * 0.2f) - 4.0f) * DIST_SCAILE;
 
 
     // 상황판 스냅샷을 복사해서 쓰면 더 안전
@@ -813,6 +843,7 @@ static void DecideActionFromBoard(void)
     if (detectedFront_cp && distFront_cp < safeDistThreshold) {
         currentAction = ACTION_DECELERATE;
     }
+
     //elif로 후방거리 따짐
     else if (detectedRear_cp && distRear_cp < safeDistThreshold) {
         currentAction = ACTION_ACCELERATE;
@@ -824,8 +855,8 @@ static void DecideActionFromBoard(void)
 
 void Motor_StartKick(void)
 {
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, PWM_MAX_VALUE * 0.9); // 70%
-  osDelay(500);
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, PWM_MAX_VALUE * 0.7); // 70%
+  osDelay(100);
 }
 
 void Maintain_TargetSpeed(float target) {
@@ -1025,7 +1056,7 @@ void LogicTask(void const * argument)
 	  	uint8_t pd7 = (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7) == GPIO_PIN_RESET); // pullup+falling 가정
 	  	HAL_GPIO_WritePin(GPIOB, LD2_Pin, pd7 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 	  	//HAL_GPIO_WritePin(GPIOB, LD1_Pin, Drive_st ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
+	  	Uart3_Printf("Velocity : %d\n", ((current_duty*100)/PWM_MAX_VALUE) + 1);
 	  	BoardTimeoutUpdate();			//상황판은 계속 최신 상태로 유지 -> 반응성 UP
 	    if(Drive_st == DRIVING){
 	  	  if (!g_board.vs.isEnabled) {	//cruize가 안켜져있으면 Maintain(주행)으로 continue
@@ -1042,7 +1073,7 @@ void LogicTask(void const * argument)
 
 	    // Door logic
 	    // test할 때 if 죽이기
-	    if (now - lastDoorTick > pdMS_TO_TICKS(1000)) { // 1초 이상 갱신 없으면
+	    if (now - lastDoorTick > pdMS_TO_TICKS(DOOR_TIMEOUT)) { // 0.5초 이상 갱신 없으면
 	        currentClass = CLASS_NONE;
 	        currentDistance = INF_DIST;
 	    }
