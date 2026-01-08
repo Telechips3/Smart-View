@@ -72,6 +72,7 @@ typedef struct {
     uint64_t timestamp;
     int obj_count;           // 감지된 객체 수
     BBox objects[MAX_BBOX_OBJS];
+    char data[65535]; // [추가] 바이너리(JSON+Base64)가 저장될 공간 (UDP 최대 크기 수준)
 } CameraItem;
 
 typedef struct {

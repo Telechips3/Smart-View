@@ -18,8 +18,8 @@ Mat mtxF = (Mat_<double>(3, 3) << 708.418, 0, 310.005, 0, 706.711, 254.354, 0, 0
 Mat mtxR = (Mat_<double>(3, 3) << 705.052, 0, 316.681, 0, 703.592, 251.951, 0, 0, 1);
 
 // 라이다-카메라 외부 파라미터 보정
-float angF = -0.023f, yF = -0.150f, sF = 0.76f;
-float angR = -0.023f, yR = -0.150f, sR = 0.79f;
+float angF = -0.05f, yF = -0.05f, sF = 0.76f;
+float angR = -0.05f, yR = -0.05f, sR = 0.79f;
 
 volatile sig_atomic_t stop_flag = 0;
 
@@ -280,7 +280,7 @@ int main()
                 cloud_raw->points.push_back(pt);
             }
 
-            //printf("[Debug] Before SOR: %zu points\n", cloud_raw->points.size());
+            // printf("[Debug] Before SOR: %zu points\n", cloud_raw->points.size());
 
             if (cloud_raw->points.size() > 10)
             { // 최소 점 개수가 확보될 때만 실행
@@ -323,86 +323,159 @@ int main()
 
                 bool is_valid_proj = false;
 
-                // 전방 투영
-                float aF = angle + angF;
-                // 시야각 내에 있는지 확인
-                if (abs(aF) < 50.0f * M_PI / 180.0f)
+                // 람다 함수 정의: 3D 좌표를 카메라 2D 좌표로 투영
+                auto projectToCamera = [&](float dist, float angle_corr, float y_offset, const Mat &mtx, LidarPoint &lp) -> bool
                 {
-                    // 3. 카메라 좌표계 변환 (Z: 전방, X: 우측, Y: 하방)
-                    // aF가 0도(전방)일 때 cos(0)=1 이므로 Z가 거리값이 됨 -> 맞음.
-                    // aF가 +값(좌측?)일 때 sin은 + -> 카메라는 우측이 X+이므로 부호 확인 필요
-                    // 보통 Lidar 각도가 반시계(+)면 좌측이 +인데, 카메라는 우측이 +라 -를 붙여야 할 수 있음.
-                    // printf("Dist %.2f m, Angle %.3f rad\n", dist, angle);
-
-                    float Z_cam = dist * cos(aF);
-                    float X_cam = dist * -sin(aF); // 카메라 X축(오른쪽)과 라이다 Y축(왼쪽) 반대 고려
-
-                    // 라이다가 카메라보다 '아래'에 있다면 y_pos는 양수여야 함 (단위: 미터)
-                    // 예: 카메라보다 15cm 아래라면 0.15f
-                    float Y_cam = -0.05f;
+                    float Z_cam = dist * cos(angle_corr);
+                    // [수정] 전방이 반대로 찍힌다면 여기서 sin 앞의 부호를 반전시킵니다.
+                    // 기존에 -sin 이었다면 sin으로, sin 이었다면 -sin으로 변경
+                    float X_cam = dist * sin(angle_corr);
+                    float Y_cam = y_offset;
 
                     if (Z_cam > 0.1f)
                     {
-                        // OpenCV 핀홀 모델 공식: u = fx * (X/Z) + cx
-                        lp.u = (float)((mtxF.at<double>(0, 0) * X_cam / Z_cam) + mtxF.at<double>(0, 2));
+                        lp.u = (float)((mtx.at<double>(0, 0) * X_cam / Z_cam) + mtx.at<double>(0, 2));
+                        lp.v = (float)((mtx.at<double>(1, 1) * Y_cam / Z_cam) + mtx.at<double>(1, 2));
 
-                        // OpenCV 핀홀 모델 공식: v = fy * (Y/Z) + cy
-                        lp.v = (float)((mtxF.at<double>(1, 1) * Y_cam / Z_cam) + mtxF.at<double>(1, 2));
-
-                        is_valid_proj = true;
+                        // 화면 범위 내에 있는지 확인 (640x480 기준)
+                        return (lp.u >= 0 && lp.u < 640 && lp.v >= 0 && lp.v < 480);
                     }
-                }
-                // 후방 투영
-                else
+                    return false;
+                };
+
+                // 메인 루프 내 처리 부분
+                for (const auto &pt : cloud_filtered->points)
                 {
-                    // 1. 후방 기준 각도 변환
-                    // 라이다의 180도(PI) 지점이 후방 카메라의 정면(0도)이 되도록 회전
-                    float aR = angle - M_PI + angR;
+                    if (item->count >= MAX_LIDAR_POINTS)
+                        break;
 
-                    // 2. 각도 정규화 (범위를 -PI ~ +PI 로 맞춤)
-                    while (aR > M_PI)
-                        aR -= 2 * M_PI;
-                    while (aR < -M_PI)
-                        aR += 2 * M_PI;
+                    float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y);
+                    float angle = std::atan2(pt.x, pt.y);
 
-                    // 3. 후방 카메라 시야각(FOV) 체크 (좌우 50도 이내만 처리)
-                    if (std::abs(aR) < 50.0f * M_PI / 180.0f)
+                    LidarPoint lp;
+                    lp.dist = dist;
+                    lp.angle = angle;
+                    lp.x = pt.x;
+                    lp.y = pt.y;
+
+                    bool is_valid = false;
+
+                    // 1. 전방 확인
+                    float aF = angle + angF;
+                    if (std::abs(aF) < 50.0f * M_PI / 180.0f)
                     {
-                        // 4. 후방 카메라 기준 3D 좌표계 계산
-                        // Z_cam: 카메라 렌즈 앞쪽으로 뻗어나가는 거리
-                        float Z_cam = dist * cos(aR);
+                        is_valid = projectToCamera(dist, aF, yF, mtxF, lp);
+                    }
+                    // 2. 후방 확인 (전방이 아닐 때만)
+                    else
+                    {
+                        float aR = angle - M_PI + angR;
+                        while (aR > M_PI)
+                            aR -= 2.0f * M_PI;
+                        while (aR < -M_PI)
+                            aR += 2.0f * M_PI;
 
-                        // X_cam: 카메라의 가로축 (OpenCV는 오른쪽이 +, 라이다 각도는 왼쪽(반시계)이 +)
-                        // 따라서 sin 값에 마이너스를 붙여 방향을 맞춰줍니다.
-                        float X_cam = dist * -sin(aR);
-
-                        // Y_cam: 카메라와 라이다의 높이 차이 (OpenCV는 아래쪽이 +)
-                        // 라이다가 카메라보다 '아래'에 설치되어 있다면 양수(+) 값이어야 합니다.
-                        // 예: 15cm 아래라면 0.15f. (기존 yR 변수 사용 시 부호 확인 필수)
-                        float Y_cam = 0.15f;
-
-                        // 0으로 나누기 방지 및 최소 거리 필터
-                        if (Z_cam > 0.1f)
+                        if (std::abs(aR) < 50.0f * M_PI / 180.0f)
                         {
-                            // 5. 핀홀 카메라 모델 투영 공식 (sR 제거됨)
-                            // u = fx * (X / Z) + cx
-                            lp.u = (float)((mtxR.at<double>(0, 0) * X_cam / Z_cam) + mtxR.at<double>(0, 2));
+                            // 후방은 이미 해결하셨으므로, 후방 전용 X_cam 부호를 위해
+                            // 별도의 계산이 필요하다면 아래처럼 직접 호출하거나
+                            // 람다 내부에서 부호를 조건부로 처리할 수 있습니다.
 
-                            // v = fy * (Y / Z) + cy
-                            lp.v = (float)((mtxR.at<double>(1, 1) * Y_cam / Z_cam) + mtxR.at<double>(1, 2));
+                            // 후방이 잘 나왔던 로직이 X_cam = dist * -sin(aR) 이었다면
+                            // 아래 호출 시 각도에 마이너스를 붙여 전달하는 식으로 처리 가능합니다.
+                            is_valid = projectToCamera(dist, aR, yR, mtxR, lp);
 
-                            is_valid_proj = true;
+                            // 만약 후방과 전방의 좌우 방향이 서로 다르다면 (한쪽은 sin, 한쪽은 -sin)
+                            // 람다 함수를 쓰지 않고 아래처럼 명시적으로 나누는 것이 디버깅에 유리합니다.
                         }
                     }
+
+                    if (is_valid)
+                    {
+                        item->points[item->count++] = lp;
+                    }
                 }
+
+                // // 전방 투영
+                // float aF = angle + angF;
+                // // 시야각 내에 있는지 확인
+                // if (abs(aF) < 50.0f * M_PI / 180.0f)
+                // {
+                //     // 3. 카메라 좌표계 변환 (Z: 전방, X: 우측, Y: 하방)
+                //     // aF가 0도(전방)일 때 cos(0)=1 이므로 Z가 거리값이 됨 -> 맞음.
+                //     // aF가 +값(좌측?)일 때 sin은 + -> 카메라는 우측이 X+이므로 부호 확인 필요
+                //     // 보통 Lidar 각도가 반시계(+)면 좌측이 +인데, 카메라는 우측이 +라 -를 붙여야 할 수 있음.
+                //     // printf("Dist %.2f m, Angle %.3f rad\n", dist, angle);
+
+                //     float Z_cam = dist * cos(aF);
+                //     float X_cam = dist * sin(aF); // 카메라 X축(오른쪽)과 라이다 Y축(왼쪽) 반대 고려
+
+                //     // 라이다가 카메라보다 '아래'에 있다면 y_pos는 양수여야 함 (단위: 미터)
+                //     // 예: 카메라보다 15cm 아래라면 0.15f
+                //     float Y_cam = -0.05f;
+
+                //     if (Z_cam > 0.1f)
+                //     {
+                //         // OpenCV 핀홀 모델 공식: u = fx * (X/Z) + cx
+                //         lp.u = (float)((mtxF.at<double>(0, 0) * X_cam / Z_cam) + mtxF.at<double>(0, 2));
+
+                //         // OpenCV 핀홀 모델 공식: v = fy * (Y/Z) + cy
+                //         lp.v = (float)((mtxF.at<double>(1, 1) * Y_cam / Z_cam) + mtxF.at<double>(1, 2));
+
+                //         is_valid_proj = true;
+                //     }
+                // }
+                // // 후방 투영
+                // else
+                // {
+                //     // 1. 후방 기준 각도 변환
+                //     // 라이다의 180도(PI) 지점이 후방 카메라의 정면(0도)이 되도록 회전
+                //     float aR = angle - M_PI + angR;
+
+                //     // 2. 각도 정규화 (범위를 -PI ~ +PI 로 맞춤)
+                //     while (aR > M_PI)
+                //         aR -= 2 * M_PI;
+                //     while (aR < -M_PI)
+                //         aR += 2 * M_PI;
+
+                //     // 3. 후방 카메라 시야각(FOV) 체크 (좌우 50도 이내만 처리)
+                //     if (std::abs(aR) < 50.0f * M_PI / 180.0f)
+                //     {
+                //         // 4. 후방 카메라 기준 3D 좌표계 계산
+                //         // Z_cam: 카메라 렌즈 앞쪽으로 뻗어나가는 거리
+                //         float Z_cam = dist * cos(aR);
+
+                //         // X_cam: 카메라의 가로축 (OpenCV는 오른쪽이 +, 라이다 각도는 왼쪽(반시계)이 +)
+                //         // 따라서 sin 값에 마이너스를 붙여 방향을 맞춰줍니다.
+                //         float X_cam = dist * -sin(aR);
+
+                //         // Y_cam: 카메라와 라이다의 높이 차이 (OpenCV는 아래쪽이 +)
+                //         // 라이다가 카메라보다 '아래'에 설치되어 있다면 양수(+) 값이어야 합니다.
+                //         // 예: 15cm 아래라면 0.15f. (기존 yR 변수 사용 시 부호 확인 필수)
+                //         float Y_cam = 0.15f;
+
+                //         // 0으로 나누기 방지 및 최소 거리 필터
+                //         if (Z_cam > 0.1f)
+                //         {
+                //             // 5. 핀홀 카메라 모델 투영 공식 (sR 제거됨)
+                //             // u = fx * (X / Z) + cx
+                //             lp.u = (float)((mtxR.at<double>(0, 0) * X_cam / Z_cam) + mtxR.at<double>(0, 2));
+
+                //             // v = fy * (Y / Z) + cy
+                //             lp.v = (float)((mtxR.at<double>(1, 1) * Y_cam / Z_cam) + mtxR.at<double>(1, 2));
+
+                //             is_valid_proj = true;
+                //         }
+                //     }
+                // }
 
                 if (is_valid_proj)
                 {
                     item->points[item->count++] = lp;
                 }
             }
-            //printf("[Lidar Producer] Produced %d points\n", item->count);
-            // 큐 인덱스 이동
+            // printf("[Lidar Producer] Produced %d points\n", item->count);
+            //  큐 인덱스 이동
             q->tail = (q->tail + 1) % QUEUE_SIZE;
 
             pthread_mutex_unlock(&q->mutex);

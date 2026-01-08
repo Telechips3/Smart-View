@@ -35,7 +35,7 @@ static ssize_t dev_write(struct file *file, const char __user *buf, size_t len, 
             struct spi_message m;
             spi_message_init(&m);
             spi_message_add_tail(&t, &m);
-            print_hex_dump(KERN_INFO, "[DEBUG] SPI TX: ", DUMP_PREFIX_NONE, 16, 1, packet, len, false);
+            //print_hex_dump(KERN_INFO, "[DEBUG] SPI TX: ", DUMP_PREFIX_NONE, 16, 1, packet, len, false);
             ret = spi_sync(stm_spi_device[i], &m); // 하드웨어 전송
                 
             if (ret < 0)

@@ -5,7 +5,7 @@
 #include <errno.h>
 #include "../common.h"
 
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE (1<<16)
 
 volatile sig_atomic_t stop_flag = 0;
 
@@ -22,7 +22,6 @@ int64_t get_timestamp_ms()
     // 초를 밀리초로 변환 + 나노초를 밀리초로 변환
     return (int64_t)ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
 }
-
 
 // 1. 공유 메모리 연결
 int attach_shm(const char *shm_name, CameraQueue **shm_q)
@@ -100,12 +99,12 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
         item->timestamp = ts->valuedouble;
 
     uint64_t current_time = get_timestamp_ms() * 1000ll;
-    if((int64_t)current_time - (int64_t)(item->timestamp)<0)
+    if ((int64_t)current_time - (int64_t)(item->timestamp) < 0)
     {
         printf(" Timestamp Error!\n");
     }
     // 터미널 출력 헤더
-    // //printf("\n[Cam: %d | Status: %s | TS: %ld]",
+    // printf("\n[Cam: %d | Status: %s | TS: %ld]",
     //        *out_cam_id,
     //        (status_val == 1) ? "\033[0;32mOK\033[0m" : "\033[0;31mLOST\033[0m",
     //        item->timestamp);
@@ -129,7 +128,7 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
 
             if (cJSON_IsNumber(id))
             {
-                if(id->valueint < 0 || id->valueint >= 4)
+                if (id->valueint < 0 || id->valueint >= 4)
                 {
                     printf(" Invalid class ID: %d\n", id->valueint);
                     continue; // 잘못된 클래스 ID는 무시
@@ -147,16 +146,35 @@ int parse_json_to_item(const char *json_str, CameraItem *item, int *out_cam_id)
             if (cJSON_IsNumber(d))
                 item->objects[count].distance = (float)d->valuedouble;
 
-            
-            //전방 카메라
-            //좌표 전체 출력
-            //  printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f\n",
-            //         item->objects[count].class_id,
-            //         item->objects[count].x, item->objects[count].y,
-            //         item->objects[count].w, item->objects[count].h
-            //         );
+            // 전방 카메라
+            // 좌표 전체 출력
+            //   printf(" [ID:%d, x:%.1f, y:%.1f, w:%.1f, h:%.1f\n",
+            //          item->objects[count].class_id,
+            //          item->objects[count].x, item->objects[count].y,
+            //          item->objects[count].w, item->objects[count].h
+            //          );
             count++;
         }
+    }
+
+    // base image data 파싱
+    cJSON *data = cJSON_GetObjectItem(root, "image_base64");
+    if (cJSON_IsString(data) && (data->valuestring != NULL))
+    {
+        size_t source_len = strlen(data->valuestring);
+        // 2. 버퍼가 수용 가능한 최대 길이 (null 문자 제외)
+        size_t max_safe_len = sizeof(item->data) - 1;
+        // 3. 둘 중 더 작은 값만큼만 복사 (버퍼 오버플로우 방지)
+        size_t copy_len = (source_len < max_safe_len) ? source_len : max_safe_len;
+        // 4. memcpy 실행
+        memcpy(item->data, data->valuestring, copy_len);
+
+        // 5. 마지막에 반드시 null 문자 추가
+        item->data[copy_len] = '\0';
+    }
+    else
+    {
+        item->data[0] = '\0'; // 빈 문자열로 초기화
     }
 
     item->obj_count = count;
@@ -202,7 +220,6 @@ int main(int argc, char *argv[])
             buffer[n] = '\0';
             CameraItem temp_item;
             int received_cam_id = -1;
-
             if (parse_json_to_item(buffer, &temp_item, &received_cam_id) == 0)
             {
                 // cam_id에 따라 타겟 큐 결정 (0: Front, 1: Back)
@@ -213,7 +230,7 @@ int main(int argc, char *argv[])
                     // 소비자가 데이터를 가져갈 때까지 대기
                     int val;
                     sem_getvalue(&target_q->sem_empty, &val);
-                    printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
+                    //printf("[Debug] Before wait - sem_empty: %d, tail: %d\n", val, target_q->tail);
 
                     sem_wait(&target_q->sem_empty);
                     pthread_mutex_lock(&target_q->mutex);

@@ -177,7 +177,8 @@ int main() {
                             if (p.dist < minD) { minD = p.dist; targetA = p.ang; found = true; }
                         }
                     }
-
+                    printf("MidDist for cam %d box at (%d,%d,%d,%d): %.2f m\n", 
+                           cam_id, bx, by, bw, bh, found ? minD : -1.0f);
                     // 박스를 그릴 대상 화면과 색상 결정
                     Mat& targetView = (cam_id == 0) ? viewF : viewR;
                     Scalar color = (cam_id == 0) ? Scalar(0, 255, 0) : Scalar(0, 0, 255);
