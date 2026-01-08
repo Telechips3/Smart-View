@@ -4,72 +4,138 @@ import numpy as np
 import time
 import socket
 import json
+import base64
 from hailo_platform import (VDevice, HEF, ConfigureParams, InferVStreams,
                             InputVStreamParams, OutputVStreamParams,
                             HailoStreamInterface, FormatType)
 
-# --- [1. 설정 값 공간] ---
-MODEL_PATH = '/usr/share/hailo-models/yolov8s_h8.hef' # Hailo 전용 모델 파일 경로
-CAM_SOURCES = [0, 2]                                 # 사용할 카메라 인덱스 (예: /dev/video0, /dev/video2)
-TARGET_IP = "192.168.1.13"                           # 데이터를 받을 서버 IP
-UDP_PORT = 5005                                      # 데이터를 받을 UDP 포트 번호
+# ==========================================
+# 1. 설정 및 상수 (Configuration)
+# ==========================================
+MODEL_PATH = '/usr/share/hailo-models/yolov8s_h8.hef'  # Hailo 가속기용 모델 파일 경로
+CAM_SOURCES = [0, 2]                                  # 연결된 카메라 인덱스 리스트
+TARGET_IP = "192.168.1.13"                            # 데이터를 받을 목적지 IP
+UDP_PORT = 5005                                       # UDP 포트 번호
+JPEG_QUALITY = 40                                     # 이미지 압축 품질 (UDP 용량 제한 때문)
 
-# 클래스별 신뢰도 임계값 (0: 사람, 1: 자전거, 2: 자동차, 3: 오토바이, 5: 버스, 7: 트럭)
-CLASS_THRESHOLDS = {0: 0.50, 1: 0.50, 2: 0.35, 3: 0.35, 5: 0.35, 7: 0.35}
-FILTER_CLASSES = [0, 1, 2, 3, 5, 7]                  # 검출할 클래스 번호 목록
+# [카메라 예상 거리 계산용] 거리 = (초점거리 * 실제높이) / 이미지상 픽셀높이
+FOCAL_LENGTHS = {0: 352.46, 2: 352.46}                # 카메라별 초점 거리
+REAL_HEIGHTS = {                                      # 클래스별 실제 평균 높이 (미터 단위)
+    0: 1.7,   # Person
+    1: 1.1,   # Bicycle
+    2: 1.5,   # Car
+    3: 0.8,   # Motorcycle
+    5: 3.3,   # Bus
+    7: 3.5    # Truck
+}
+
+# [필터링 및 라벨링]
+CLASS_NAMES = {0: "Person", 1: "Bicycle", 2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+CLASS_THRESHOLDS = {0: 0.50, 1: 0.50, 2: 0.35, 3: 0.35, 5: 0.35, 7: 0.35} # 클래스별 신뢰도 임계값
+FILTER_CLASSES = [0, 1, 2, 3, 5, 7]                  # 추론 결과에서 추출할 클래스 목록
+
+
+# ==========================================
+# 2. 유틸리티 함수 (Utility Functions)
+# ==========================================
+
+def draw_detections(frame, detections):
+    """
+    프레임 위에 객체의 경계 상자(Bounding Box)와 정보를 덧씌움.
+    """
+    viz_frame = frame.copy()
+    for det in detections:
+        x, y, w, h = int(det['x']), int(det['y']), int(det['w']), int(det['h'])
+        label_name = CLASS_NAMES.get(det['id'], f"ID:{det['id']}")
+        
+        # 박스 및 텍스트 시각화
+        color = (0, 255, 0) # 초록색
+        cv2.rectangle(viz_frame, (x, y), (x + w, y + h), color, 2)
+        
+        label_text = f"{label_name} {det['d']}m"
+        (t_w, t_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(viz_frame, (x, y - t_h - baseline), (x + t_w, y), color, -1)
+        cv2.putText(viz_frame, label_text, (x, y - baseline), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+    return viz_frame
+
+def encode_image_to_base64(frame, quality=40):
+    """
+    OpenCV 이미지를 JPEG로 압축한 후 Base64 문자열로 변환 (네트워크 전송용)
+    """
+    try:
+        success, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if not success:
+            return None
+        return base64.b64encode(buffer).decode('utf-8')
+    except Exception as e:
+        print(f"Image encoding error: {e}")
+        return None
+
+
+# ==========================================
+# 3. 객체 탐지 클래스 (Core Classes)
+# ==========================================
 
 class YOLOv8PostProcess:
-    """Hailo 모델의 출력 데이터를 해석하여 좌표와 클래스를 추출하는 클래스"""
+    """
+    Hailo 가속기에서 나온 Raw Output을 해석하여 객체 정보로 변환
+    """
     def __init__(self, thresholds):
         self.thresholds = thresholds
 
-    def process(self, infer_results, img_w, img_h):
+    def process(self, infer_results, img_w, img_h, cam_idx):
         detections = []
-        # 모델의 출력 결과(Dictionary 형태)를 반복하며 처리
-        for k, v in infer_results.items():
+        f_length = FOCAL_LENGTHS.get(cam_idx, 352.46)
+
+        # Hailo 출력 데이터 구조를 순회 (YOLOv8 구조 기준)
+        for _, v in infer_results.items():
             raw_data = v[0] if isinstance(v, list) else v
-            if isinstance(raw_data, (list, np.ndarray)) and len(raw_data) >= 80:
-                # 최대 80개의 클래스 결과 확인
-                for class_idx, class_dets in enumerate(raw_data[:80]):
-                    if class_idx not in FILTER_CLASSES: continue
-                    
-                    score_thresh = self.thresholds.get(class_idx, 0.5)
-                    for det in class_dets:
-                        # 신뢰도(Confidence Score)가 기준치 이상인 경우만 추출
-                        if len(det) >= 5 and det[4] >= score_thresh:
-                            ymin, xmin, ymax, xmax = det[:4]
+            if not isinstance(raw_data, (list, np.ndarray)) or len(raw_data) < 80:
+                continue
 
-                            # [좌표 예외 처리 및 정규화]
-                            # 1. 0.0 ~ 1.0 범위를 벗어나지 않도록 클리핑 (화면 밖 검출 방지)
-                            xmin_c = max(0.0, min(1.0, float(xmin)))
-                            ymin_c = max(0.0, min(1.0, float(ymin)))
-                            xmax_c = max(0.0, min(1.0, float(xmax)))
-                            ymax_c = max(0.0, min(1.0, float(ymax)))
+            for class_idx, class_dets in enumerate(raw_data[:80]):
+                if class_idx not in FILTER_CLASSES: 
+                    continue
+                
+                score_thresh = self.thresholds.get(class_idx, 0.5)
 
-                            # 2. 비율 기반 좌표를 실제 이미지 픽셀 크기로 변환
-                            px = xmin_c * img_w
-                            py = ymin_c * img_h
-                            pw = (xmax_c - xmin_c) * img_w
-                            ph = (ymax_c - ymin_c) * img_h
+                for det in class_dets:
+                    if len(det) >= 5 and det[4] >= score_thresh:
+                        # 좌표 정규화 해제 (0.0~1.0 -> 픽셀 단위)
+                        ymin, xmin, ymax, xmax = det[:4]
+                            # 좌표의 최소값(0.0)과 최대값(1.0) 제한
+                        xmin_c = max(0.0, min(1.0, float(xmin)))
+                        ymin_c = max(0.0, min(1.0, float(ymin)))
+                        xmax_c = max(0.0, min(1.0, float(xmax)))
+                        ymax_c = max(0.0, min(1.0, float(ymax)))
+                            # 픽셀 단위 좌표 계산
+                        px, py = xmin_c * img_w, ymin_c * img_h
+                        pw, ph = (xmax_c - xmin_c) * img_w, (ymax_c - ymin_c) * img_h
 
-                            # 특정 클래스(5: 버스, 7: 트럭)는 2(자동차)로 통합 관리
-                            effective_cid = 2 if class_idx in [5, 7] else class_idx
+                        # 거리 계산 (공식: 실제높이 * 초점거리 / 이미지상 높이)
+                        real_h = REAL_HEIGHTS.get(class_idx, 1.0)
+                        distance = (f_length * real_h) / ph if ph > 0 else 0
+                        
+                        # 버스/트럭은 자동차(2) ID로 통합 처리 후 시각화
+                        effective_cid = 2 if class_idx in [5, 7] else class_idx
 
-                            detections.append({
-                                "id": int(effective_cid),
-                                "x": round(px, 1),
-                                "y": round(py, 1),
-                                "w": round(pw, 1),
-                                "h": round(ph, 1)
-                            })
+                        detections.append({
+                            "id": int(effective_cid),
+                            "x": round(px, 1), "y": round(py, 1),
+                            "w": round(pw, 1), "h": round(ph, 1),
+                            "d": round(float(distance), 2)
+                        })
         return detections
 
 class CameraStream:
-    """카메라 영상을 별도의 쓰레드에서 캡처하여 끊김 없는 스트리밍을 제공하는 클래스"""
+    """
+    카메라 영상을 별도의 스레드에서 끊임없이 읽어오는 클래스 (지연 방지용)
+    """
     def __init__(self, cam_id):
         self.cam_id = cam_id
         self.cap = cv2.VideoCapture(cam_id)
-        # 해상도 설정 (640x480)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.frame = None
@@ -77,7 +143,6 @@ class CameraStream:
         self.stopped = False
 
     def start(self):
-        # 데몬 쓰레드로 시작 (메인 프로그램 종료 시 자동 종료)
         threading.Thread(target=self.update, daemon=True).start()
         return self
 
@@ -88,64 +153,88 @@ class CameraStream:
                 self.frame = frame
                 self.is_connected = True
             else:
-                # 연결 끊김 시 재시도 로직
                 self.is_connected = False
                 self.cap.release()
-                time.sleep(2)
+                time.sleep(2) # 재연결 시도 대기
                 self.cap = cv2.VideoCapture(self.cam_id)
-            time.sleep(0.01) # CPU 점유율 방지용 미세 대기
+            time.sleep(0.01)
+
+# ==========================================
+# 4. Main Loop
+# ==========================================
 
 def main():
-    # 1. 전송용 UDP 소켓 및 Hailo 가속기 장치 초기화
+    # UDP 소켓 초기화
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535) # 송신 버퍼 최대화
+    except: pass
+
+    # Hailo 장치 준비
+    vdevice = VDevice()
     hef = HEF(MODEL_PATH)
-    target = VDevice() # Hailo-8 장치 할당
     
-    # 2. 모델 구성 및 네트워크 그룹 설정
-    params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
-    network_group = target.configure(hef, params)[0]
+    # 모델의 입출력 설정 로드
+    configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+    network_group = vdevice.configure(hef, configure_params)[0]
     
-    # 모델의 입력 형태(가로, 세로) 확인 (보통 640x640)
     input_info = hef.get_input_vstream_infos()[0]
     model_w, model_h = input_info.shape[1], input_info.shape[0]
 
-    # 3. 카메라 스트림 및 후처리 객체 생성
+    # 카메라 스트림 시작
     streams = [CameraStream(src).start() for src in CAM_SOURCES]
     post_proc = YOLOv8PostProcess(CLASS_THRESHOLDS)
 
-    # 4. 입출력 가상 스트림 설정 (입력: UINT8 이미지, 출력: FLOAT32 예측값)
-    input_params = InputVStreamParams.make_from_network_group(network_group, format_type=FormatType.UINT8)
-    output_params = OutputVStreamParams.make_from_network_group(network_group, format_type=FormatType.FLOAT32)
+    # 입출력 스트림 파라미터 생성
+    in_params = InputVStreamParams.make_from_network_group(network_group, format_type=FormatType.UINT8)
+    out_params = OutputVStreamParams.make_from_network_group(network_group, format_type=FormatType.FLOAT32)
 
-    print(f"Streaming JSON to {TARGET_IP}:{UDP_PORT}")
+    print(f"Smart-View: Streaming visualized images to {TARGET_IP}:{UDP_PORT}")
 
-    # 5. 메인 추론 루프
-    with network_group.activate(), InferVStreams(network_group, input_params, output_params) as pipeline:
+    # 가속기 활성화 및 추론 루프
+    with network_group.activate(), InferVStreams(network_group, in_params, out_params) as pipeline:
         while True:
-            for cam_id, stream in enumerate(streams):
-                # 전송할 데이터 기본 구조 (JSON 패킷)
+            for cam_idx, stream in enumerate(streams):
+                # 전송할 기본 데이터 구조 (Packet)
                 packet = {
-                    "cam_id": cam_id,
-                    "timestamp": time.time(),
-                    "status": 1 if stream.is_connected else 0, # 1: 정상, 0: 연결 유실
-                    "detections": []
+                    "cam_id": cam_idx,
+                    "timestamp": int(time.time() * 1000000), # 마이크로초 단위 타임스탬프
+                    "status": 1 if stream.is_connected else 0,
+                    "detections": [],
+                    "image_base64": None
                 }
 
                 if stream.is_connected and stream.frame is not None:
+                    # 1. 이미지 전처리 (모델 크기에 맞춤)
                     frame = stream.frame
-                    # 모델 크기에 맞춰 이미지 리사이징
                     resized = cv2.resize(frame, (model_w, model_h))
                     
-                    # Hailo 가속기로 추론(Inference) 실행
+                    # 2. Hailo 가속기 추론 실행
                     results = pipeline.infer({input_info.name: np.expand_dims(resized, axis=0)})
                     
-                    # 결과를 해석(Post-process)하여 좌표 목록 획득
-                    packet["detections"] = post_proc.process(results, frame.shape[1], frame.shape[0])
+                    # 3. 후처리 (박스 좌표 및 거리 계산)
+                    detections = post_proc.process(results, frame.shape[1], frame.shape[0], cam_idx)
+                    packet["detections"] = detections
 
-                # 최종 데이터를 JSON으로 직렬화하여 UDP 전송
-                sock.sendto(json.dumps(packet).encode(), (TARGET_IP, UDP_PORT))
+                    # 4. 시각화 및 인코딩
+                    viz_frame = draw_detections(frame, detections)
+                    img_str = encode_image_to_base64(viz_frame, quality=JPEG_QUALITY)
+                    packet["image_base64"] = img_str
 
-            time.sleep(0.01) # 전체 루프 속도 조절
+                # 5. UDP 전송
+                try:
+                    json_data = json.dumps(packet).encode()
+                    # UDP 패킷 크기 제한(약 65KB) 확인
+                    if len(json_data) > 65000:
+                        print("Warning: Packet too large ({len(json_data)} bytes). Reduce JPEG_QUALITY.")
+                        packet["image_base64"] = None
+                        json_data = json.dumps(packet).encode()
+                    
+                    sock.sendto(json_data, (TARGET_IP, UDP_PORT))
+                except Exception as e:
+                    print(f"Socket error: {e}")
+
+            time.sleep(0.01) # CPU 부하 방지용 미세 대기
 
 if __name__ == "__main__":
     main()
