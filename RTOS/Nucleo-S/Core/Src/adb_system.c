@@ -6,7 +6,7 @@
  */
 void ADB_Init(void) {
     MAX7219_Init(); // MAX7219 초기화
-    ADB_SetX(-1);   // 초기 상태: 모든 LED 켜짐
+    ADB_SetX(-1,0);   // 초기 상태: 모든 LED 켜짐
 }
 
 /**
@@ -18,14 +18,14 @@ void ADB_Init(void) {
  *
  * 하드웨어 구조:
  * ┌─────────────────────┬─────────────────────┐
- * │  왼쪽 헤드라이트     │  오른쪽 헤드라이트   │
+ * │  왼쪽 헤드라이트     	 │  오른쪽 헤드라이트      │
  * │     (8x16)          │     (8x16)          │
  * ├──────────┬──────────┼──────────┬──────────┤
- * │ 모듈 0   │ 모듈 1   │ 모듈 2   │ 모듈 3   │
- * │ (0~7열)  │(8~15열)  │ (0~7열)  │(8~15열)  │
+ * │ 모듈 0    │ 모듈 1    │ 모듈 2    │ 모듈 3    │
+ * │ (0~7열)	  |(8~15열) 	 │ (0~7열) 	│(8~15열)
  * └──────────┴──────────┴──────────┴──────────┘
  */
-void ADB_SetX(int16_t center_x) {
+void ADB_SetX(int16_t center_x, int8_t range) {
     // 1. 초기화: 모든 마스크를 켜진 상태(0xFF)로 시작
     uint8_t mask_left[2] = {0xFF, 0xFF};   // 왼쪽 헤드라이트 2개 모듈
     uint8_t mask_right[2] = {0xFF, 0xFF};  // 오른쪽 헤드라이트 2개 모듈
@@ -45,7 +45,7 @@ void ADB_SetX(int16_t center_x) {
             if (col_idx >= 16) col_idx = 15;
 
             // 그림자 범위: ±1칸 (총 3칸 끔)
-            int range = 1;
+            //int range = 1;
 
             for (int i = -range; i <= range; i++) {
                 int target = col_idx + i;
@@ -72,7 +72,7 @@ void ADB_SetX(int16_t center_x) {
             if (col_idx < 0) col_idx = 0;
             if (col_idx >= 16) col_idx = 15;
 
-            int range = 1;
+            //int range = 1;
 
             for (int i = -range; i <= range; i++) {
                 int target = col_idx + i;

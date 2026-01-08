@@ -153,8 +153,8 @@ extern SPI_HandleTypeDef hspi2;
 
 typedef struct {
     uint8_t  header;    // 0xAA (Start Byte)
-    uint8_t  detected;  // Detect Flag (1 Byte)
-    uint8_t class_ID;
+    uint8_t  detected;  // 0 : 앞, 1: 뒤
+    uint8_t class_ID; // 무슨 객체인지
     float timestamp; // Time (2 Bytes)
     float    distance;  // Distance (4 Bytes)
     float    bbox_x;    // BBox X (4 Bytes)
