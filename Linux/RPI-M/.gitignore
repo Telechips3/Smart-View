@@ -55,16 +55,7 @@ a.out
 *.so
 *.so.*
 *.dll
-*.dylib
-
-# --- [CMake 및 빌드 시스템 파일] ---
-CMakeCache.txt
-CMakeFiles/
-CMakeScripts/
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
+*.dyl
 
 # --- [IDE 및 에디터 관련] ---
 .vscode/
