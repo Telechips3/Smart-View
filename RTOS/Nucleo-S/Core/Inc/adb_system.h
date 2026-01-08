@@ -11,5 +11,5 @@
 
 // 함수 프로토타입
 void ADB_Init(void);
-void ADB_SetX(int16_t center_x);
+void ADB_SetX(int16_t center_x, int8_t range);
 #endif

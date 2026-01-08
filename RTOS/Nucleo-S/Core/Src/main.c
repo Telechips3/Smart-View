@@ -697,8 +697,13 @@ void StartDefaultTask(void const * argument)
   ADB_Init();
   MX_SPI2_Init();
 
-  // ★ 변경됨: 송신 버퍼 없이 '수신'만 시작
+  //송신 버퍼 없이 '수신'만 시작
   HAL_SPI_Receive_IT(&hspi2, (uint8_t*)&rx_packet_spi, PACKET_SIZE);
+
+  // 마지막 데이터 받은 시간 저장 변수
+  uint32_t last_rx_tick = HAL_GetTick();
+
+  const uint32_t TIMEOUT_MS = 500;
 
   for(;;)
   {
@@ -706,30 +711,59 @@ void StartDefaultTask(void const * argument)
       {
           spi_data_ready = 0;
 
+          last_rx_tick = HAL_GetTick();
+
           // 1. 데이터 파싱
           uint8_t obj_type = rx_packet_spi.class_ID;
           uint8_t direction = rx_packet_spi.detected;
-          int16_t target_x = (int16_t)rx_packet_spi.bbox_x;
-          float target_dist = rx_packet_spi.distance;
+          float dist_cm = rx_packet_spi.distance;
 
+          float raw_x = rx_packet_spi.bbox_x;
+          float raw_w = rx_packet_spi.bbox_w;
+
+          int16_t center_x = (int16_t)(raw_x + (raw_w / 2.0f));
+
+          static int8_t current_range = 1;
+
+          if (dist_cm < 55.0f)
+          {
+              // [위험 구역] 아주 가까움 -> 5칸(Range 2)으로 확실히 가림
+              current_range = 2;
+          }
+          else if (dist_cm >= 55.0f && dist_cm < 80.0f)
+          {
+              // [일반 구역] 적당한 거리 -> 3칸(Range 1)으로 줄임
+              current_range = 1;
+          }
+          else if (dist_cm >= 80.0f)
+          {
+              // [안전 구역] 아주 멂 -> 1칸(Range 0)으로 핀포인트 제어
+              // ★ 여기가 핵심! shadow 칸 0칸 (실제로는 중심 1칸만 꺼짐)
+              current_range = 0;
+          }
           //차량이면
           if(obj_type == 2)
           {
         	  if(direction == 0)
         	  {
-        		  ADB_SetX(target_x);
+        		  ADB_SetX(center_x, current_range);
         	  }
         	  else if(direction == 1)
         	  {
-        		  RearDisplay_SetDistance(target_dist);
+        		  RearDisplay_SetDistance(dist_cm);
         	  }
-        	  else
-        	  {
-        		  ADB_SetX(-1);
-        		  RearDisplay_SetDistance(100.0f);
-        	  }
+
           }
+
       }
+
+      //타임아웃 체크(5초)
+      if((HAL_GetTick() - last_rx_tick) > TIMEOUT_MS)
+      {
+    	  ADB_SetX(-1,0);
+    	  RearDisplay_SetDistance(100.0f);
+      }
+
       osDelay(1);
   }
   /* USER CODE END 5 */

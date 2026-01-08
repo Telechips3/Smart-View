@@ -57,9 +57,9 @@ void RearDisplay_Init(void)
 // 거리값에 따라 표정 변경 로직
 void RearDisplay_SetDistance(float distance)
 {
-    if (distance < 14.0f) {
+    if (distance < 50.0f) {
         current_face_ptr = sad_face;    // 위험 (너무 가까움)
-    } else if (distance < 20.0f) {
+    } else if (distance < 70.0f) {
         current_face_ptr = normal_face; // 주의
     } else {
         current_face_ptr = smile_face;  // 안전
