@@ -214,7 +214,7 @@ void Uart3_Printf(char *fmt,...)
 	char string[64];
 
 	va_start(ap,fmt);
-	vsprintf(string,fmt,ap);
+	vsnprintf(string,sizeof(string),fmt,ap);
 	va_end(ap);
 	Uart3_Send_String(string);
 }
@@ -292,7 +292,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of DoorActing */
@@ -977,7 +977,8 @@ void StartDefaultTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	  Uart3_Printf("Velocity : %ld\n", (long)((current_duty*100)/PWM_MAX_VALUE) + 1);
+    osDelay(500);
   }
   /* USER CODE END 5 */
 }
@@ -1056,7 +1057,6 @@ void LogicTask(void const * argument)
 	  	uint8_t pd7 = (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7) == GPIO_PIN_RESET); // pullup+falling 가정
 	  	HAL_GPIO_WritePin(GPIOB, LD2_Pin, pd7 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 	  	//HAL_GPIO_WritePin(GPIOB, LD1_Pin, Drive_st ? GPIO_PIN_SET : GPIO_PIN_RESET);
-	  	Uart3_Printf("Velocity : %d\n", ((current_duty*100)/PWM_MAX_VALUE) + 1);
 	  	BoardTimeoutUpdate();			//상황판은 계속 최신 상태로 유지 -> 반응성 UP
 	    if(Drive_st == DRIVING){
 	  	  if (!g_board.vs.isEnabled) {	//cruize가 안켜져있으면 Maintain(주행)으로 continue
